@@ -2,87 +2,116 @@
 local Mapa = {}
 Mapa.__index = Mapa
 
-function Mapa:new(engine, tamanho_tile)
-    local instancia = {
-        engine = engine,
-        tamanho_tile = tamanho_tile, -- Tamanho de cada quadrado (ex: 16x16)
-        
-        -- Dicionário configurando o que cada número faz
-        -- r, g, b = Cores | colisor = Verdadeiro/Falso para bater
-        tipos = {
-            [0] = { r = 0,   g = 0,   b = 0,   colisor = false, visivel = false }, -- Chão / Nada
-            [1] = { r = 150, g = 150, b = 150, colisor = true,  visivel = true },  -- Parede Cinza
-            [2] = { r = 0,   g = 0,   b = 255, colisor = true,  visivel = true },  -- Água / Bloco Azul
-            [3] = { r = 0,   g = 255, b = 0,   colisor = false, visivel = true },  -- Grama (Pode pisar)
-        },
+local TILE_CHAO   = 0
+local TILE_PAREDE = 1
 
-        -- O nosso mapa (Matriz Numérica)
-        -- Aqui você "desenha" o mapa usando os números acima
-        dados = {
-            {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1},
-            {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-        }
-    }
-    setmetatable(instancia, Mapa)
-    return instancia
+local TILESET = {
+    [TILE_CHAO]   = { col = 0, lin = 2 },
+    [TILE_PAREDE] = { col = 5, lin = 3 },
+}
+
+local DADOS = {
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1},
+    {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+}
+
+function Mapa:new(engine, tamanho_tile, caminho_png)
+    local inst = setmetatable({}, Mapa)
+
+    inst.engine      = engine
+    inst.tile_w      = tamanho_tile
+    inst.tile_h      = tamanho_tile
+    inst.dados       = DADOS
+    inst.num_linhas  = #DADOS
+    inst.num_colunas = #DADOS[1]
+
+    -- Largura / altura total do mapa em pixels (útil para limitar câmera)
+    inst.largura_px  = inst.num_colunas * tamanho_tile
+    inst.altura_px   = inst.num_linhas  * tamanho_tile
+
+    -- Carrega o sprite completo do tileset (engine_draw_tilemap precisa do sprite inteiro)
+    inst.sprite_id = caminho_png and engine:carregar_sprite(caminho_png) or -1
+
+    -- Monta a tabela linear que engine:desenhar_tilemap() espera.
+    -- Cada valor é o índice linear do tile no tileset: col + lin * (tileset_w / tile_w)
+    -- Calculamos aqui uma vez para não repetir no loop.
+    inst._tilemap_linear = inst:_construir_tilemap_linear()
+
+    return inst
 end
 
--- Função para desenhar o mapa na tela
-function Mapa:desenhar()
-    for linha = 1, #self.dados do
-        for coluna = 1, #self.dados[linha] do
-            local valor = self.dados[linha][coluna]
-            local tipo = self.tipos[valor]
-            
-            if tipo and tipo.visivel then
-                -- Calcula a posição na tela (em Lua o array começa no 1, por isso o -1)
-                local x = (coluna - 1) * self.tamanho_tile
-                local y = (linha - 1) * self.tamanho_tile
-                
-                self.engine:desenhar_retangulo(x, y, self.tamanho_tile, self.tamanho_tile, tipo.r, tipo.g, tipo.b)
-            end
+function Mapa:_construir_tilemap_linear()
+    -- Calcula tiles_por_linha com base no maior col definido em TILESET + 1
+    -- (a engine vai usar isso para calcular src_x = tile_id % tiles_por_linha)
+    -- Mas engine_draw_tilemap usa: src_x = (tile_id % tpr) * tile_w
+    --                              src_y = (tile_id / tpr) * tile_h
+    -- onde tpr = largura_do_sprite / tile_w.
+    -- Então construímos o ID como: col + lin * tpr
+    -- Não temos tpr aqui, mas podemos usar um valor fixo ou calcular do maior col.
+    -- Como o tileset da casa tem pelo menos 8 colunas (col=5 é parede), usamos 8.
+    local tpr = 8  -- tiles por linha no tileset (ajuste se o PNG tiver outra largura)
+
+    local linear = {}
+    for lin = 1, self.num_linhas do
+        for col = 1, self.num_colunas do
+            local valor = self.dados[lin][col]
+            local ts    = TILESET[valor]
+            local id    = ts.col + ts.lin * tpr
+            linear[#linear + 1] = id
         end
     end
+    return linear
 end
 
--- Função que verifica se uma área (como o jogador) está tocando num colisor
+function Mapa:desenhar(cam_x, cam_y)
+    local ox = -(cam_x or 0)
+    local oy = -(cam_y or 0)
+
+    self.engine:tilemap(
+        self._tilemap_linear,
+        self.num_linhas,
+        self.num_colunas,
+        self.sprite_id,
+        self.tile_w,
+        self.tile_h,
+        ox, oy
+    )
+end
+
+
 function Mapa:tem_colisao(x, y, w, h)
-    -- Descobre quais colunas e linhas o retângulo está ocupando
-    local coluna_esq = math.floor(x / self.tamanho_tile) + 1
-    local coluna_dir = math.floor((x + w - 1) / self.tamanho_tile) + 1
-    local linha_cima = math.floor(y / self.tamanho_tile) + 1
-    local linha_baixo = math.floor((y + h - 1) / self.tamanho_tile) + 1
+    local t  = self.tile_w
+    local c0 = math.floor(x / t) + 1
+    local c1 = math.floor((x + w - 1) / t) + 1
+    local l0 = math.floor(y / t) + 1
+    local l1 = math.floor((y + h - 1) / t) + 1
 
-    -- Verifica só os blocos que estão nessas posições calculadas
-    for linha = linha_cima, linha_baixo do
-        for coluna = coluna_esq, coluna_dir do
-            if self.dados[linha] and self.dados[linha][coluna] then
-                local valor = self.dados[linha][coluna]
-                local tipo = self.tipos[valor]
-                if tipo and tipo.colisor then
-                    return true -- Achou uma parede!
-                end
+    for lin = l0, l1 do
+        for col = c0, c1 do
+            local linha = self.dados[lin]
+            if linha and linha[col] == TILE_PAREDE then
+                return true
             end
         end
     end
-    return false -- Caminho livre!
+    return false
 end
 
 return Mapa
