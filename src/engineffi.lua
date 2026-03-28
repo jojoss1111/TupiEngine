@@ -1,15 +1,29 @@
 -- engineffi.lua
--- Definições C para o LuaJIT FFI — espelha Engine.h otimizado.
+-- Definições C para o LuaJIT FFI — espelha Engine.hpp (arquitetura multi-backend).
+--
+-- MUDANÇAS vs versão anterior:
+--   Engine:
+--     - display/screen/window/glx_ctx removidos do layout público.
+--       Agora residem dentro do RendererGL (C++), invisível ao FFI.
+--     - renderer_impl (void*) e backend_id (int) adicionados no lugar.
+--   Todo o resto (SpriteData, GameObject, Camera, Particle, etc.)
+--   é idêntico — compatibilidade total com os arquivos Lua existentes.
+--
 local ffi = require("ffi")
 
 ffi.cdef[[
-/* ---- Limites (reduzidos para economizar RAM) ---- */
+/* ---- Limites ---- */
 static const int ENGINE_MAX_SPRITES    = 64;
 static const int ENGINE_MAX_OBJECTS    = 256;
 static const int ENGINE_MAX_KEYS       = 256;
 static const int ENGINE_MAX_PARTICLES  = 512;
 static const int ENGINE_MAX_ANIMATORS  = 32;
 static const int ENGINE_MAX_LAYERS     = 8;
+
+/* ---- IDs de backend ---- */
+static const int ENGINE_BACKEND_ID_GL   = 0;
+static const int ENGINE_BACKEND_ID_DX11 = 1;
+static const int ENGINE_BACKEND_ID_VK   = 2;
 
 /* ---- Botões do mouse ---- */
 static const int ENGINE_MOUSE_LEFT   = 0;
@@ -60,7 +74,7 @@ typedef struct {
     float shake_timer;
 } Camera;
 
-/* ---- Particle (compactada: sem campos r/g/b intermediários) ---- */
+/* ---- Particle ---- */
 typedef struct {
     float x, y;
     float vx, vy;
@@ -90,7 +104,7 @@ typedef struct {
     float _acc;
 } ParticleEmitter;
 
-/* ---- Animator (com frame_dur pré-computado) ---- */
+/* ---- Animator ---- */
 typedef struct {
     int   sprite_ids[32];
     int   frame_count;
@@ -117,7 +131,7 @@ typedef struct {
 } KeysymCache;
 
 /* ==============================================================
- * Audio types — must be defined before Engine struct
+ * Audio types
  * ============================================================== */
 
 static const int ENGINE_AUDIO_MAX_TRACKS = 32;
@@ -132,9 +146,8 @@ typedef enum {
     AUDIO_TRACK_FINISHED = 3
 } AudioTrackStatus;
 
-/* AudioTrack — ma_sound is opaque from Lua (C-internal) */
 typedef struct {
-    char             sound[2048];
+    char             sound[2048];   /* ma_sound opaque */
     AudioTrackStatus status;
     int              in_use;
     float            volume;
@@ -143,60 +156,79 @@ typedef struct {
     int              resume_after;
 } AudioTrack;
 
-/* AudioContext — embedded in Engine struct below */
 typedef struct {
     char        _ma_engine[4096];
     AudioTrack  tracks[32];
-    char        _mutex[64];   /* pthread_mutex_t, opaque */
+    char        _mutex[64];         /* pthread_mutex_t, opaco */
     int         ready;
 } AudioContext;
 
-/* ---- Engine (contexto principal) ---- */
+/* ==============================================================
+ * Engine — contexto principal
+ *
+ * MUDANÇA DE LAYOUT vs versão anterior:
+ *   Antes: display*, screen, window, glx_ctx ocupavam os primeiros
+ *          campos (específicos de X11/OpenGL).
+ *   Agora: renderer_impl (void*) + backend_id (int) abrem a struct.
+ *          Toda a lógica de plataforma fica dentro do objeto C++
+ *          apontado por renderer_impl — invisível ao FFI.
+ *
+ *   Os demais campos são idênticos e na mesma ordem.
+ * ============================================================== */
 typedef struct {
-    void       *display;
-    int         screen;
-    unsigned long window;
-    void       *glx_ctx;
+    /* ---- Backend opaco ---- */
+    void *renderer_impl;   /* IRenderer* — não acesse diretamente do Lua */
+    int   backend_id;      /* ENGINE_BACKEND_ID_GL / DX11 / VK */
 
-    int         win_w, win_h;
-    int         depth;
-    int         scale;
-    int         render_w, render_h;
+    /* ---- Dimensões ---- */
+    int   win_w, win_h;
+    int   depth;
+    int   scale;
+    int   render_w, render_h;
 
+    /* ---- Textura branca ---- */
     unsigned int white_tex;
 
+    /* ---- Sprites / Objetos ---- */
     SpriteData  sprites[64];
     int         sprite_count;
 
     GameObject  objects[256];
     int         object_count;
 
+    /* ---- Input ---- */
     int        *keys;
     int        *keys_prev;
     KeysymCache ksym_cache;
 
     MouseState  mouse;
 
+    /* ---- Partículas ---- */
     Particle        particles[512];
     int             particle_count;
     int             particle_next;
     ParticleEmitter emitters[16];
     int             emitter_count;
 
+    /* ---- Animadores ---- */
     Animator    animators[32];
     int         animator_count;
 
+    /* ---- Câmera ---- */
     Camera      camera;
     int         camera_enabled;
 
+    /* ---- Fade ---- */
     float       fade_alpha;
     float       fade_target;
     float       fade_speed;
     int         fade_r, fade_g, fade_b;
 
+    /* ---- Tempo ---- */
     double      time_elapsed;
     double      delta_time;
 
+    /* ---- Estado geral ---- */
     int         running;
     unsigned long bg_color;
 
@@ -204,11 +236,11 @@ typedef struct {
     int         saved_win_w, saved_win_h;
     int         saved_render_w, saved_render_h;
 
-    /* Audio subsystem */
+    /* ---- Áudio ---- */
     AudioContext audio;
 } Engine;
 
-/* ---- API pública (idêntica à versão anterior) ---- */
+/* ---- API pública (nomes idênticos à versão anterior) ---- */
 int    engine_init(Engine *e, int width, int height, const char *title, int scale);
 void   engine_destroy(Engine *e);
 void   engine_set_background(Engine *e, int r, int g, int b);
@@ -302,18 +334,10 @@ int    engine_mouse_scroll(Engine *e);
 
 void   engine_toggle_fullscreen(Engine *e);
 
-/* ==============================================================
- * Audio API — function declarations
- * (types AudioHandle, AudioTrack, AudioContext defined above)
- * ============================================================== */
-
 int          engine_audio_init   (Engine *e);
 void         engine_audio_update (Engine *e);
 void         engine_audio_destroy(Engine *e);
-
-AudioHandle  engine_audio_play   (Engine *e, const char *file,
-                                   int loop, float volume, float pitch,
-                                   int resume_after);
+AudioHandle  engine_audio_play   (Engine *e, const char *file, int loop, float volume, float pitch, int resume_after);
 void         engine_audio_pause  (Engine *e, AudioHandle h);
 void         engine_audio_resume (Engine *e, AudioHandle h);
 void         engine_audio_stop   (Engine *e, AudioHandle h);

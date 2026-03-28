@@ -1,3 +1,7 @@
+-- engine.lua — SEM ALTERAÇÕES DE CÓDIGO NECESSÁRIAS.
+-- Compatível com o novo Engine.cpp/Engine.hpp multi-backend.
+-- Todos os nomes de função (nova(), rodando(), eventos(), etc.) são idênticos.
+
 local ffi = require("engineffi")
 local lib = ffi.load("./libengine.so")
 local math = math
