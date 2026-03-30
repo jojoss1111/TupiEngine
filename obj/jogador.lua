@@ -80,36 +80,33 @@ function player:mover(mapa)
     end
 
     local movendo = false
-
-    if self.engine:tecla("s") then
-        tentar_y      = self.eixo_y + self.velocidade
-        self.direcao  = "baixo"
-        movendo       = true
-    elseif self.engine:tecla("w") then
+    if self.engine:tecla("w") then
         tentar_y      = self.eixo_y - self.velocidade
         self.direcao  = "cima"
         movendo       = true
-    end
-
-    if self.engine:tecla("d") then
-        tentar_x      = self.eixo_x + self.velocidade
-        self.direcao  = "direita"
-        self.engine:espelhar(self.id_obj, true, false)
+    elseif self.engine:tecla("s") then
+        tentar_y      = self.eixo_y + self.velocidade
+        self.direcao  = "baixo"
         movendo       = true
     elseif self.engine:tecla("a") then
         tentar_x      = self.eixo_x - self.velocidade
         self.direcao  = "esquerda"
         self.engine:espelhar(self.id_obj, false, false)
         movendo       = true
+    elseif self.engine:tecla("d") then
+        tentar_x      = self.eixo_x + self.velocidade
+        self.direcao  = "direita"
+        self.engine:espelhar(self.id_obj, true, false)
+        movendo       = true
     end
 
     if self.engine:tecla_press("e") then
         self:_tocar(self.direcao .. "_ataque")
         if self.direcao == "baixo" then
-            self.obj_espada = self.engine:criar_objeto(self.eixo_x + 10, self.eixo_y + 10, 1, 5, 15, 200, 200, 255)
+            self.obj_espada = self.engine:criar_objeto_tile(self.eixo_x + 10, self.eixo_y + 10, 1, 2, 1, 16, 16)
         end
         if self.direcao == "cima" then
-            self.obj_espada = self.engine:criar_objeto(self.eixo_x + 10, self.eixo_y - 10, 1, 5, 15, 200, 200, 255)
+            self.obj_espada = self.engine:criar_objeto_tile(self.eixo_x + 10, self.eixo_y - 10, 1, 2, 1, 16, 16)
         end
         if self.direcao == "esquerda" then
             self.obj_espada = self.engine:criar_objeto(self.eixo_x - 10, self.eixo_y + 10, 1, 15, 5, 200, 200, 255)
