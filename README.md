@@ -62,3 +62,27 @@ while jogo:rodando() do
     jogo:apresentar()
     jogo:fps(60)
 end
+```
+## 🛠️ Como Compilar e Rodar
+A engine foi desenhada para ser compilada de forma simples usando o `make`.
+### 1. Pré-requisitos
+Certifique-se de ter as ferramentas básicas instaladas:
+* **No Linux:** `g++`, `make`, `libx11-dev`, `libgl1-mesa-dev`, `libpng-dev` e `luajit`.
+* **No Windows (MinGW/Clang):** Um ambiente que suporte `make` (como MSYS2) e os headers do DirectX 11.
+### 2. Compilação (Gerando a Shared Library)
+O comando principal gera o arquivo `libengine.so` (ou `.dll`), que é o coração da engine.
+**Para Linux (Padrão OpenGL/X11):**
+```bash
+make BACKEND=gl
+```
+```Dos
+make BACKEND=dx11
+```
+* **Nota: O Makefile baixará automaticamente o arquivo miniaudio.h caso ele não esteja na pasta src/.
+### 3. Como Rodar o seu Jogo
+A TupiEngine não gera um executável "fechado", ela é uma biblioteca carregada pelo LuaJIT.
+Certifique-se de que o arquivo compilado (libengine.so) está na mesma pasta do seu script principal (ex: main.lua).
+Chame o LuaJIT apontando para o seu script:
+```
+luajit main.lua
+```
