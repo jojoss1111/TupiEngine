@@ -1,21 +1,4 @@
 -- engineffi.lua
---
--- Declarações FFI da engine para uso com LuaJIT.
---
--- Este arquivo espelha Engine.hpp: qualquer mudança na struct Engine ou nos
--- protótipos das funções deve ser replicada aqui manualmente.
---
--- Uso:
---   local ffi = require("engineffi")          -- retorna o objeto ffi já configurado
---   local e   = ffi.new("Engine")
---   ffi.C.engine_init(e, 320, 180, "Meu Jogo", 3)
---
--- Observações importantes:
---   • Os tipos de ponteiro (void*, int*) são opacos do ponto de vista do Lua.
---     Nunca acesse renderer_impl diretamente; use as funções da API pública.
---   • Os tamanhos dos buffers opacos (_ma_engine, sound) devem coincidir
---     exatamente com os equivalentes em C; verifique ao atualizar miniaudio.
---   • AudioHandle é apenas int; ENGINE_AUDIO_INVALID == -1.
 
 local ffi = require("ffi")
 
@@ -31,7 +14,6 @@ static const int ENGINE_MAX_LAYERS     = 8;
 /* IDs de backend — usados em Engine.backend_id */
 static const int ENGINE_BACKEND_ID_GL   = 0;
 static const int ENGINE_BACKEND_ID_DX11 = 1;
-static const int ENGINE_BACKEND_ID_VK   = 2;
 
 /* Índices de botão do mouse para MouseState.buttons[] */
 static const int ENGINE_MOUSE_LEFT   = 0;
@@ -150,6 +132,44 @@ typedef struct {
 static const int ENGINE_AUDIO_MAX_TRACKS = 32;
 static const int ENGINE_AUDIO_INVALID    = -1;
 
+/* Limites dos pools de FBO e Shader — devem coincidir com Engine.hpp */
+static const int ENGINE_MAX_FBOS    = 8;
+static const int ENGINE_MAX_SHADERS = 16;
+
+/* Spatial Grid */
+static const int ENGINE_SGRID_CELL_SIZE  = 64;
+static const int ENGINE_SGRID_COLS       = 64;
+static const int ENGINE_SGRID_ROWS       = 64;
+static const int ENGINE_SGRID_BUCKET_CAP = 16;
+static const int ENGINE_SGRID_TOTAL_CELLS = 4096;  /* COLS * ROWS */
+static const int ENGINE_SGRID_OBJ_MAX_CELLS = 4;
+
+/* Uma célula do grid: lista de até ENGINE_SGRID_BUCKET_CAP object IDs */
+typedef struct {
+    int count;
+    int oids[16];   /* ENGINE_SGRID_BUCKET_CAP */
+} SpatialCell;
+
+/* Rastreia em quais células um objeto está inscrito */
+typedef struct {
+    int cell_idx[4];   /* ENGINE_SGRID_OBJ_MAX_CELLS */
+    int count;
+} SpatialObjEntry;
+
+/* Contexto completo do grid de particionamento espacial */
+typedef struct {
+    SpatialCell     cells[4096];        /* ENGINE_SGRID_TOTAL_CELLS */
+    SpatialObjEntry obj_cells[256];     /* ENGINE_MAX_OBJECTS */
+    int             enabled;
+    int             cell_size;
+    int             cols;
+    int             rows;
+    int             dirty;
+} SpatialGrid;
+
+typedef int FboHandle;
+typedef int ShaderHandle;
+
 typedef int AudioHandle;
 
 typedef enum {
@@ -175,6 +195,30 @@ typedef struct {
     char        _mutex[64];         /* pthread_mutex_t opaco; tamanho seguro para Linux x64 */
     int         ready;
 } AudioContext;
+
+/* =================================================================
+ * FboData — um Framebuffer Object com textura de cor anexada.
+ *
+ * fbo_id e color_tex são handles opacos do backend gráfico.
+ * width/height correspondem às dimensões da textura de cor.
+ * ================================================================= */
+typedef struct {
+    unsigned int fbo_id;
+    unsigned int color_tex;
+    int          width;
+    int          height;
+    int          in_use;
+} FboData;
+
+/* =================================================================
+ * ShaderData — programa de shader compilado e linkado.
+ *
+ * program é o handle do programa (GLuint no GL, slot no DX11).
+ * ================================================================= */
+typedef struct {
+    unsigned int program;
+    int          in_use;
+} ShaderData;
 
 /* =================================================================
  * Engine — contexto principal do jogo
@@ -250,6 +294,14 @@ typedef struct {
 
     /* Subsistema de áudio */
     AudioContext audio;
+
+    /* FBOs e Shaders */
+    FboData      fbos[8];
+    ShaderData   shaders[16];
+    int          active_shader;   /* -1 = fixed-function (padrão) */
+
+    /* Spatial Grid */
+    SpatialGrid  sgrid;
 } Engine;
 
 /* =================================================================
@@ -358,6 +410,91 @@ void         engine_audio_stop   (Engine *e, AudioHandle h);
 void         engine_audio_volume (Engine *e, AudioHandle h, float volume);
 void         engine_audio_pitch  (Engine *e, AudioHandle h, float pitch);
 int          engine_audio_done   (Engine *e, AudioHandle h);
+
+/* FBOs — Framebuffer Objects */
+FboHandle    engine_fbo_create (Engine *e, int w, int h);
+void         engine_fbo_destroy(Engine *e, FboHandle fh);
+void         engine_fbo_bind   (Engine *e, FboHandle fh);
+void         engine_fbo_unbind (Engine *e);
+unsigned int engine_fbo_texture(Engine *e, FboHandle fh);
+
+/* Shaders */
+ShaderHandle engine_shader_create  (Engine *e, const char *vert_src, const char *frag_src);
+void         engine_shader_destroy (Engine *e, ShaderHandle sh);
+void         engine_shader_use     (Engine *e, ShaderHandle sh);
+void         engine_shader_none    (Engine *e);
+void         engine_shader_set_int  (Engine *e, ShaderHandle sh, const char *name, int   v);
+void         engine_shader_set_float(Engine *e, ShaderHandle sh, const char *name, float v);
+void         engine_shader_set_vec2 (Engine *e, ShaderHandle sh, const char *name, float x, float y);
+void         engine_shader_set_vec4 (Engine *e, ShaderHandle sh, const char *name, float x, float y, float z, float w);
+
+/* Spatial Grid */
+void         engine_sgrid_init            (Engine *e, int cell_size);
+void         engine_sgrid_destroy         (Engine *e);
+void         engine_sgrid_rebuild         (Engine *e);
+void         engine_sgrid_insert_object   (Engine *e, int oid);
+void         engine_sgrid_remove_object   (Engine *e, int oid);
+void         engine_sgrid_update_object   (Engine *e, int oid);
+int          engine_sgrid_query_rect      (Engine *e, int x, int y, int w, int h, int *out_oids, int cap);
+int          engine_sgrid_query_object    (Engine *e, int oid, int *out_oids, int cap);
+int          engine_sgrid_query_point     (Engine *e, int px, int py, int *out_oids, int cap);
+int          engine_sgrid_first_collision (Engine *e, int oid);
+int          engine_sgrid_all_collisions  (Engine *e, int oid, int *out_oids, int cap);
+
+/* =================================================================
+ * FOV — Field of View via Shadowcasting (fov.cpp / fov.hpp)
+ *
+ * FovMode controla a persistência do array vis[]:
+ *   FOV_MODE_BASIC   (0) — apenas raio atual; sem memória entre frames.
+ *   FOV_MODE_FOG_WAR (1) — tiles visitados ficam em ENGINE_FOV_EXPLORED
+ *                          (0.35) após saírem do raio.
+ *   FOV_MODE_SMOOTH  (2) — falloff linear de 1.0 (origem) a 0.0 (borda).
+ *
+ * FovBlockFn: callback C chamado para cada tile — retorna 1 se bloqueia visão.
+ *
+ * FovParams: parâmetros de uma computação; vis[] é alocado pelo chamador.
+ *
+ * engine_fov_compute()     — preenche vis[] com o campo de visão atual.
+ * engine_fov_draw_shadow() — sobrepõe escuridão proporcional a (1 - vis[tile]).
+ * engine_fov_draw_debug()  — desenha octantes e raio (só em dev).
+ * ================================================================= */
+
+typedef enum {
+    FOV_MODE_BASIC   = 0,
+    FOV_MODE_FOG_WAR = 1,
+    FOV_MODE_SMOOTH  = 2
+} FovMode;
+
+/* Callback de opacidade: retorna 1 se (col, row) bloqueia visão */
+typedef int (*FovBlockFn)(int col, int row, void *user_data);
+
+/* Parâmetros completos de uma sessão de FOV */
+typedef struct {
+    int        origin_col;   /* coluna do observador                        */
+    int        origin_row;   /* linha  do observador                        */
+    int        radius;       /* raio máximo em tiles                        */
+    int        map_cols;     /* largura do mapa em tiles                    */
+    int        map_rows;     /* altura  do mapa em tiles                    */
+    FovMode    mode;         /* modo de acumulação de visibilidade          */
+    FovBlockFn is_blocking;  /* callback de opacidade (não pode ser NULL)   */
+    void      *user_data;    /* passado de volta para is_blocking()         */
+    float     *vis;          /* array de saída float[map_rows * map_cols]   */
+} FovParams;
+
+void engine_fov_compute(FovParams *params);
+
+void engine_fov_draw_shadow(Engine *e,
+                             const float *vis,
+                             int map_cols, int map_rows,
+                             int tile_w,  int tile_h,
+                             int offset_x, int offset_y,
+                             int dark_r, int dark_g, int dark_b);
+
+void engine_fov_draw_debug(Engine *e,
+                            int origin_col, int origin_row,
+                            int radius,
+                            int tile_w, int tile_h,
+                            int offset_x, int offset_y);
 ]]
 
 return ffi

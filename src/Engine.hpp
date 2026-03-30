@@ -64,6 +64,44 @@
 #define ENGINE_LAYER_SORT_Z     (1 << 1)  /* ordena objetos por z_order explícito      */
 
 /* =============================================================================
+ * Limites do subsistema de FBO e Shaders
+ * ============================================================================= */
+#define ENGINE_MAX_FBOS     8    /* framebuffer objects simultâneos              */
+#define ENGINE_MAX_SHADERS  16   /* programas de shader compilados               */
+
+/* Handle opaco para FBO e Shader — índices no pool interno */
+typedef int FboHandle;
+typedef int ShaderHandle;
+
+#define ENGINE_FBO_INVALID     (-1)
+#define ENGINE_SHADER_INVALID  (-1)
+
+/*
+ * FboData — um Framebuffer Object com textura de cor anexada.
+ *
+ * width/height correspondem às dimensões da textura de cor (color_tex).
+ * fbo_id e color_tex são handles GL (ou equivalentes) opacos para o FFI.
+ */
+typedef struct {
+    unsigned int fbo_id;    /* GL: GLuint do FBO                               */
+    unsigned int color_tex; /* GL: GLuint da textura de cor (RGBA)             */
+    int          width;
+    int          height;
+    int          in_use;
+} FboData;
+
+/*
+ * ShaderData — programa GLSL compilado e linkado.
+ *
+ * program é o handle GL do programa de shader.
+ * Em backends não-GL, pode ser um índice de slot opaco.
+ */
+typedef struct {
+    unsigned int program; /* GL: GLuint do programa                             */
+    int          in_use;
+} ShaderData;
+
+/* =============================================================================
  * IDs de backend — espelham ENGINE_BACKEND_ID_* no engineffi.lua
  * ============================================================================= */
 #define ENGINE_BACKEND_ID_GL    0
@@ -300,6 +338,53 @@ typedef struct {
 #endif
 
 /* =============================================================================
+ * Spatial Grid — estruturas e constantes
+ *
+ * Grid uniforme de COLS×ROWS células para aceleração de detecção de colisão.
+ * Os valores abaixo são dimensionados para mapas de até ~4096×4096 px com
+ * objetos de ~16 px.  Ajuste ENGINE_SGRID_CELL_SIZE conforme a escala do jogo.
+ * ============================================================================= */
+#define ENGINE_SGRID_CELL_SIZE   64   /* largura/altura de cada célula em px          */
+#define ENGINE_SGRID_COLS        64   /* número de colunas do grid                    */
+#define ENGINE_SGRID_ROWS        64   /* número de linhas  do grid                    */
+#define ENGINE_SGRID_TOTAL_CELLS (ENGINE_SGRID_COLS * ENGINE_SGRID_ROWS)
+#define ENGINE_SGRID_BUCKET_CAP  16   /* máx. de objetos por célula                   */
+#define ENGINE_SGRID_OBJ_MAX_CELLS 4  /* máx. de células que um objeto pode ocupar    */
+
+/*
+ * SpatialCell — uma célula do grid.
+ * oids[]  — IDs dos objetos que intersectam esta célula.
+ * count   — quantos slots estão em uso (0..ENGINE_SGRID_BUCKET_CAP).
+ */
+typedef struct {
+    int oids[ENGINE_SGRID_BUCKET_CAP];
+    int count;
+} SpatialCell;
+
+/*
+ * SpatialObjEntry — índices das células onde um objeto está inscrito.
+ * Permite remoção O(k) sem varrer o grid todo.
+ */
+typedef struct {
+    int cell_idx[ENGINE_SGRID_OBJ_MAX_CELLS];
+    int count;
+} SpatialObjEntry;
+
+/*
+ * SpatialGrid — estado completo do grid espacial.
+ * Embutido diretamente na struct Engine (sem alocação heap).
+ */
+typedef struct {
+    SpatialCell    cells[ENGINE_SGRID_TOTAL_CELLS];
+    SpatialObjEntry obj_cells[ENGINE_MAX_OBJECTS];
+    int            cell_size;
+    int            cols;
+    int            rows;
+    int            enabled;  /* 0 = desabilitado; funções sgrid são no-op */
+    int            dirty;    /* sinaliza que um rebuild é necessário       */
+} SpatialGrid;
+
+/* =============================================================================
  * Engine — contexto principal do jogo
  *
  * Layout da struct:
@@ -379,6 +464,14 @@ typedef struct {
 
     /* --- Subsistema de áudio ------------------------------------------------ */
     AudioContext audio;
+
+    /* --- FBOs e Shaders ----------------------------------------------------- */
+    FboData      fbos[ENGINE_MAX_FBOS];
+    ShaderData   shaders[ENGINE_MAX_SHADERS];
+    ShaderHandle active_shader; /* -1 = pipeline fixed-function (padrão)        */
+
+    /* --- Spatial Grid para aceleração de colisão --------------------------- */
+    SpatialGrid  sgrid;
 } Engine;
 
 /* =============================================================================
@@ -464,6 +557,49 @@ public:
 
     /* Processa eventos de janela e entrada; específico de cada plataforma */
     virtual void poll_events(Engine *e) = 0;
+
+    /* --- FBO (Framebuffer Object) ------------------------------------------ */
+    /*
+     * fbo_create()  — cria um FBO com textura RGBA de tamanho w×h.
+     *                 Retorna ENGINE_FBO_INVALID em caso de falha.
+     * fbo_destroy() — libera os recursos GL do FBO.
+     * fbo_bind()    — redireciona o rendering para este FBO.
+     * fbo_unbind()  — restaura o framebuffer padrão (tela).
+     * fbo_texture() — retorna o handle da textura de cor do FBO,
+     *                 pronto para uso com set_texture().
+     */
+    virtual FboHandle    fbo_create (Engine *e, int w, int h) = 0;
+    virtual void         fbo_destroy(Engine *e, FboHandle fh) = 0;
+    virtual void         fbo_bind   (Engine *e, FboHandle fh) = 0;
+    virtual void         fbo_unbind (Engine *e)               = 0;
+    virtual unsigned int fbo_texture(Engine *e, FboHandle fh) = 0;
+
+    /* --- Shaders ------------------------------------------------------------ */
+    /*
+     * shader_create()  — compila vert_src + frag_src e linka o programa.
+     *                    Retorna ENGINE_SHADER_INVALID em falha (erro no stderr).
+     * shader_destroy() — libera o programa GL.
+     * shader_use()     — ativa o programa para os próximos draw calls.
+     * shader_none()    — restaura o pipeline fixed-function (desativa shaders).
+     * shader_set_int/float/vec2/vec4 — uniforms por nome.
+     */
+    virtual ShaderHandle shader_create (Engine *e,
+                                        const char *vert_src,
+                                        const char *frag_src) = 0;
+    virtual void         shader_destroy(Engine *e, ShaderHandle sh)          = 0;
+    virtual void         shader_use    (Engine *e, ShaderHandle sh)          = 0;
+    virtual void         shader_none   (Engine *e)                           = 0;
+    virtual void         shader_set_int  (Engine *e, ShaderHandle sh,
+                                          const char *name, int   v)        = 0;
+    virtual void         shader_set_float(Engine *e, ShaderHandle sh,
+                                          const char *name, float v)        = 0;
+    virtual void         shader_set_vec2 (Engine *e, ShaderHandle sh,
+                                          const char *name,
+                                          float x, float y)                 = 0;
+    virtual void         shader_set_vec4 (Engine *e, ShaderHandle sh,
+                                          const char *name,
+                                          float x, float y,
+                                          float z, float w)                 = 0;
 };
 
 /*
@@ -626,6 +762,23 @@ void        engine_audio_stop   (Engine *e, AudioHandle h);  /* para e libera o 
 void        engine_audio_volume (Engine *e, AudioHandle h, float volume);
 void        engine_audio_pitch  (Engine *e, AudioHandle h, float pitch);
 int         engine_audio_done   (Engine *e, AudioHandle h);  /* 1 se terminou ou inválido */
+
+/* FBOs — Framebuffer Objects */
+FboHandle    engine_fbo_create (Engine *e, int w, int h);
+void         engine_fbo_destroy(Engine *e, FboHandle fh);
+void         engine_fbo_bind   (Engine *e, FboHandle fh); /* rendering → FBO     */
+void         engine_fbo_unbind (Engine *e);               /* rendering → tela    */
+unsigned int engine_fbo_texture(Engine *e, FboHandle fh); /* textura de cor      */
+
+/* Shaders GLSL */
+ShaderHandle engine_shader_create (Engine *e, const char *vert_src, const char *frag_src);
+void         engine_shader_destroy(Engine *e, ShaderHandle sh);
+void         engine_shader_use    (Engine *e, ShaderHandle sh); /* ativa o programa  */
+void         engine_shader_none   (Engine *e);                  /* fixed-function    */
+void         engine_shader_set_int  (Engine *e, ShaderHandle sh, const char *name, int   v);
+void         engine_shader_set_float(Engine *e, ShaderHandle sh, const char *name, float v);
+void         engine_shader_set_vec2 (Engine *e, ShaderHandle sh, const char *name, float x, float y);
+void         engine_shader_set_vec4 (Engine *e, ShaderHandle sh, const char *name, float x, float y, float z, float w);
 
 #ifdef __cplusplus
 } /* extern "C" */

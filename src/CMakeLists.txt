@@ -15,9 +15,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # =============================================================================
 if(NOT DEFINED BACKEND)
     if(WIN32)
-        set(BACKEND "DX11" CACHE STRING "Backend gráfico (GL|VK|DX11)")
+        set(BACKEND "DX11" CACHE STRING "Backend gráfico (GL|DX11)")
     else()
-        set(BACKEND "GL" CACHE STRING "Backend gráfico (GL|VK|DX11)")
+        set(BACKEND "GL" CACHE STRING "Backend gráfico (GL|DX11)")
     endif()
 endif()
 
@@ -65,7 +65,7 @@ elseif(BACKEND_UPPER STREQUAL "DX11")
     )
 
 else()
-    message(FATAL_ERROR "BACKEND inválido: '${BACKEND}'. Use GL, VK ou DX11.")
+    message(FATAL_ERROR "BACKEND inválido: '${BACKEND}'. Use GL, ou DX11.")
 endif()
 
 # =============================================================================

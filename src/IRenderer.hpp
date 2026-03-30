@@ -30,6 +30,17 @@
 
 struct Engine;
 
+/* Handles de FBO e Shader — definidos em Engine.hpp; declarados aqui para
+ * evitar dependência circular. O IRenderer.hpp é incluído antes de Engine.hpp
+ * em alguns backends, por isso usamos forward-typedefs compatíveis. */
+#ifndef ENGINE_FBO_SHADER_HANDLES_DEFINED
+#define ENGINE_FBO_SHADER_HANDLES_DEFINED
+typedef int FboHandle;
+typedef int ShaderHandle;
+static const int ENGINE_FBO_INVALID    = -1;
+static const int ENGINE_SHADER_INVALID = -1;
+#endif
+
 /* Parâmetros de um quad do batch 2D */
 struct QuadParams {
     float dx, dy;       /* posição destino: topo-esquerdo em pixels virtuais   */
@@ -115,6 +126,49 @@ public:
 
     /* --- Input e janela --------------------------------------------------- */
     virtual void poll_events(Engine *e) = 0;
+
+    /* --- FBO (Framebuffer Object / Render Target) ------------------------- */
+    /*
+     * fbo_create()  — cria um FBO/render-target com textura de cor RGBA w×h.
+     *                 Retorna ENGINE_FBO_INVALID em caso de falha.
+     * fbo_destroy() — libera todos os recursos do FBO.
+     * fbo_bind()    — redireciona o rendering para este FBO; ajusta viewport.
+     * fbo_unbind()  — restaura o render target padrão (tela) e a projeção.
+     * fbo_texture() — retorna o handle opaco da textura de cor do FBO,
+     *                 pronto para uso com set_texture()/push_quad().
+     */
+    virtual FboHandle    fbo_create (Engine *e, int w, int h) = 0;
+    virtual void         fbo_destroy(Engine *e, FboHandle fh) = 0;
+    virtual void         fbo_bind   (Engine *e, FboHandle fh) = 0;
+    virtual void         fbo_unbind (Engine *e)               = 0;
+    virtual unsigned int fbo_texture(Engine *e, FboHandle fh) = 0;
+
+    /* --- Shaders ---------------------------------------------------------- */
+    /*
+     * shader_create()   — compila/linka vert_src + frag_src (GLSL ou HLSL).
+     *                     Retorna ENGINE_SHADER_INVALID em falha; erros no stderr.
+     * shader_destroy()  — libera o programa.
+     * shader_use()      — ativa o programa para os próximos draw calls.
+     * shader_none()     — restaura o pipeline padrão do backend.
+     * shader_set_*      — envia uniforms/constants ao shader ativo.
+     */
+    virtual ShaderHandle shader_create (Engine *e,
+                                        const char *vert_src,
+                                        const char *frag_src)  = 0;
+    virtual void         shader_destroy(Engine *e, ShaderHandle sh)          = 0;
+    virtual void         shader_use    (Engine *e, ShaderHandle sh)          = 0;
+    virtual void         shader_none   (Engine *e)                           = 0;
+    virtual void         shader_set_int  (Engine *e, ShaderHandle sh,
+                                          const char *name, int   v)        = 0;
+    virtual void         shader_set_float(Engine *e, ShaderHandle sh,
+                                          const char *name, float v)        = 0;
+    virtual void         shader_set_vec2 (Engine *e, ShaderHandle sh,
+                                          const char *name,
+                                          float x, float y)                 = 0;
+    virtual void         shader_set_vec4 (Engine *e, ShaderHandle sh,
+                                          const char *name,
+                                          float x, float y,
+                                          float z, float w)                 = 0;
 };
 
 /* ===========================================================================

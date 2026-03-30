@@ -50,6 +50,55 @@ static constexpr uint32_t DX11_MAX_VERT           = DX11_BATCH_MAX_QUADS * DX11_
 static constexpr uint32_t DX11_MAX_IDX            = DX11_BATCH_MAX_QUADS * DX11_INDICES_PER_QUAD;
 static constexpr uint32_t DX11_MAX_TEXTURES       = 128;
 
+/* --- Pool de FBOs e Shaders ----------------------------------------------- */
+static constexpr uint32_t DX11_MAX_FBOS    = 8;
+static constexpr uint32_t DX11_MAX_SHADERS = 16;
+
+/*
+ * DxFbo — Render Target Object (equivalente ao FBO do OpenGL).
+ *
+ * Cada FBO possui:
+ *   tex  — ID3D11Texture2D com D3D11_BIND_RENDER_TARGET | SHADER_RESOURCE
+ *   rtv  — Render Target View para bind como alvo de renderização
+ *   srv  — Shader Resource View para uso como textura em shaders
+ *   handle — handle público (índice base-1 no pool de texturas compartilhado)
+ */
+struct DxFbo {
+    ID3D11Texture2D*          tex    = nullptr;
+    ID3D11RenderTargetView*   rtv    = nullptr;
+    ID3D11ShaderResourceView* srv    = nullptr;
+    unsigned int              handle = 0;  /* handle no pool de texturas compartilhado */
+    int                       width  = 0;
+    int                       height = 0;
+    bool                      in_use = false;
+};
+
+/*
+ * DxShaderProgram — par de pixel shaders customizados para efeitos em tela.
+ *
+ * No DX11, o vertex shader é compartilhado (o mesmo k_hlsl_vs).
+ * Apenas o pixel shader é trocado para efeitos como blur, grayscale, CRT, etc.
+ * O constant buffer de efeito (cb_effect_) é compartilhado e atualizado por
+ * shader_set_float/vec2/vec4 antes de cada draw call de efeito.
+ *
+ * Para receber os uniforms equivalentes do GLSL, o HLSL usa:
+ *   cbuffer EffectCB : register(b1) { float4 u_params[4]; }
+ * Cada shader_set_vec4() escreve em u_params[slot] identificado pelo nome.
+ */
+struct DxShaderProgram {
+    ID3D11PixelShader* ps     = nullptr;
+    bool               in_use = false;
+    /* Mapa de nome de uniform → slot em u_params[] (máx 4 vec4 = 16 floats) */
+    struct UniformSlot { char name[32]; int slot; };
+    UniformSlot uniforms[8]   = {};
+    int         uniform_count = 0;
+};
+
+/* Constant buffer compartilhado para efeitos de shader — 4×vec4 = 64 bytes */
+struct alignas(16) DxEffectCB {
+    float params[16];  /* u_params[0..3] acessíveis no HLSL */
+};
+
 /*
  * DxVertex — formato de vértice do batch.
  *
@@ -134,6 +183,32 @@ public:
 
     void poll_events    (Engine *e)                            override;
 
+    /* --- FBO -------------------------------------------------------------- */
+    FboHandle    fbo_create (Engine *e, int w, int h)          override;
+    void         fbo_destroy(Engine *e, FboHandle fh)          override;
+    void         fbo_bind   (Engine *e, FboHandle fh)          override;
+    void         fbo_unbind (Engine *e)                        override;
+    unsigned int fbo_texture(Engine *e, FboHandle fh)          override;
+
+    /* --- Shaders ---------------------------------------------------------- */
+    ShaderHandle shader_create (Engine *e,
+                                const char *vert_src,
+                                const char *frag_src)          override;
+    void         shader_destroy(Engine *e, ShaderHandle sh)    override;
+    void         shader_use    (Engine *e, ShaderHandle sh)    override;
+    void         shader_none   (Engine *e)                     override;
+    void         shader_set_int  (Engine *e, ShaderHandle sh,
+                                  const char *name, int   v)   override;
+    void         shader_set_float(Engine *e, ShaderHandle sh,
+                                  const char *name, float v)   override;
+    void         shader_set_vec2 (Engine *e, ShaderHandle sh,
+                                  const char *name,
+                                  float x, float y)            override;
+    void         shader_set_vec4 (Engine *e, ShaderHandle sh,
+                                  const char *name,
+                                  float x, float y,
+                                  float z, float w)            override;
+
     /* Expõe o HWND para que a WndProc estática consiga rotear mensagens */
     HWND hwnd() const { return hwnd_; }
 
@@ -171,6 +246,15 @@ private:
     /* --- Pool de texturas -------------------------------------------------- */
     DxTexture               textures_[DX11_MAX_TEXTURES] = {};
 
+    /* --- Pool de FBOs ----------------------------------------------------- */
+    DxFbo                   fbos_[DX11_MAX_FBOS]         = {};
+
+    /* --- Pool de shaders -------------------------------------------------- */
+    DxShaderProgram         shader_programs_[DX11_MAX_SHADERS] = {};
+    ID3D11Buffer*           cb_effect_      = nullptr;  /* cb de uniforms dos shaders */
+    DxEffectCB              effect_cb_cpu_  = {};
+    ShaderHandle            active_shader_  = -1;
+
     /* --- Estado ------------------------------------------------------------ */
     float                   clear_color_[4] = {0, 0, 0, 1};
     bool                    vsync_          = true;
@@ -189,14 +273,18 @@ private:
     /* --- Helpers de inicialização ------------------------------------------ */
     bool _create_window    (int win_w, int win_h, const char *title);
     bool _create_device_and_swapchain(int win_w, int win_h);
-    bool _create_rtv       ();           /* cria o RenderTargetView do back buffer  */
-    bool _create_shaders   ();           /* compila HLSL inline via D3DCompile      */
-    bool _create_states    ();           /* blend, rasterizer e sampler states      */
-    bool _create_buffers   ();           /* VB dinâmico e IB estático               */
+    bool _create_rtv       ();
+    bool _create_shaders   ();
+    bool _create_states    ();
+    bool _create_buffers   ();
+    bool _create_effect_cb ();   /* constant buffer para uniforms de shader de efeito */
 
-    void _release_rtv      ();           /* libera o RTV antes de resize/recreate   */
-    void _flush_internal   ();           /* submete o batch atual e zera o contador */
-    void _update_cb        ();           /* atualiza DxOrthoVS no constant buffer   */
+    void _release_rtv      ();
+    void _flush_internal   ();
+    void _update_cb        ();
+    void _update_effect_cb ();   /* envia effect_cb_cpu_ para a GPU */
+
+    int  _shader_uniform_slot(DxShaderProgram &prog, const char *name);
 
     uint32_t _alloc_tex_slot();          /* retorna índice de slot livre ou UINT_MAX */
     uint32_t _handle_to_idx (unsigned int handle); /* handle → índice no pool       */

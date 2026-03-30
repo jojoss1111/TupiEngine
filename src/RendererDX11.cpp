@@ -74,6 +74,97 @@ float4 main(PSIn i) : SV_TARGET
 // Libera com segurança um objeto COM, verificando nulidade antes de chamar Release().
 static inline void _safe_release(IUnknown *p) { if (p) p->Release(); }
 
+/* ============================================================================
+ * Pixel shaders de efeito (HLSL) — compilados em runtime via D3DCompile
+ *
+ * Todos compartilham o mesmo vertex shader (k_hlsl_vs) e o constant buffer
+ * de projeção ortográfica (b0).  Um segundo constant buffer (b1, EffectCB)
+ * fornece até 4 vec4 de parâmetros para cada efeito.
+ *
+ * Convenção de uniforms (mapeados em EffectCB.params[]):
+ *   slot 0 → params[0..3]   (vec4)
+ *   slot 1 → params[4..7]   (vec4)
+ *   ...
+ * shader_set_float/vec2/vec4() escrevem no slot registrado pelo nome.
+ * ========================================================================== */
+
+/* Estrutura HLSL do EffectCB compartilhado */
+static const char* k_hlsl_effect_cb = R"HLSL(
+cbuffer EffectCB : register(b1) {
+    float4 u_params[4];
+};
+)HLSL";
+
+/* Fragment: Escala de cinza (luminância BT.601) */
+static const char* k_hlsl_ps_gray = R"HLSL(
+cbuffer EffectCB : register(b1) { float4 u_params[4]; };
+Texture2D    tex      : register(t0);
+SamplerState sampler_ : register(s0);
+struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD; float4 col : COLOR; };
+float4 main(PSIn i) : SV_TARGET {
+    float4 c   = tex.Sample(sampler_, i.uv) * i.col;
+    float  lum = dot(c.rgb, float3(0.299f, 0.587f, 0.114f));
+    return float4(lum, lum, lum, c.a);
+}
+)HLSL";
+
+/* Fragment: Negativo fotográfico */
+static const char* k_hlsl_ps_invert = R"HLSL(
+cbuffer EffectCB : register(b1) { float4 u_params[4]; };
+Texture2D    tex      : register(t0);
+SamplerState sampler_ : register(s0);
+struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD; float4 col : COLOR; };
+float4 main(PSIn i) : SV_TARGET {
+    float4 c = tex.Sample(sampler_, i.uv) * i.col;
+    return float4(1.0f - c.rgb, c.a);
+}
+)HLSL";
+
+/* Fragment: Tint — u_params[0] = tint vec4 */
+static const char* k_hlsl_ps_tint = R"HLSL(
+cbuffer EffectCB : register(b1) { float4 u_params[4]; };
+Texture2D    tex      : register(t0);
+SamplerState sampler_ : register(s0);
+struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD; float4 col : COLOR; };
+float4 main(PSIn i) : SV_TARGET {
+    float4 c = tex.Sample(sampler_, i.uv) * i.col;
+    return float4(c.rgb * u_params[0].rgb, c.a * u_params[0].a);
+}
+)HLSL";
+
+/* Fragment: Aberração cromática — u_params[0].xy = offset */
+static const char* k_hlsl_ps_aberr = R"HLSL(
+cbuffer EffectCB : register(b1) { float4 u_params[4]; };
+Texture2D    tex      : register(t0);
+SamplerState sampler_ : register(s0);
+struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD; float4 col : COLOR; };
+float4 main(PSIn i) : SV_TARGET {
+    float2 off = u_params[0].xy;
+    float r = tex.Sample(sampler_, i.uv + off).r;
+    float g = tex.Sample(sampler_, i.uv      ).g;
+    float b = tex.Sample(sampler_, i.uv - off).b;
+    float a = tex.Sample(sampler_, i.uv      ).a;
+    return float4(r, g, b, a) * i.col;
+}
+)HLSL";
+
+/* Fragment: CRT — u_params[0].xy = resolução em pixels */
+static const char* k_hlsl_ps_crt = R"HLSL(
+cbuffer EffectCB : register(b1) { float4 u_params[4]; };
+Texture2D    tex      : register(t0);
+SamplerState sampler_ : register(s0);
+struct PSIn { float4 pos : SV_POSITION; float2 uv : TEXCOORD; float4 col : COLOR; };
+float4 main(PSIn i) : SV_TARGET {
+    float4 c        = tex.Sample(sampler_, i.uv) * i.col;
+    float  scanline = sin(i.uv.y * u_params[0].y * 3.14159f) * 0.04f;
+    float2 d        = i.uv - 0.5f;
+    float  vinheta  = 1.0f - dot(d, d) * 1.4f;
+    return float4(c.rgb * (1.0f - scanline) * vinheta, c.a);
+}
+)HLSL";
+
+(void)k_hlsl_effect_cb; /* referenciado pela documentação, não compilado direto */
+
 // Retorna o índice do primeiro slot de textura disponível no pool interno.
 // Retorna UINT32_MAX caso não haja slots livres.
 uint32_t RendererDX11::_alloc_tex_slot()
@@ -446,6 +537,7 @@ bool RendererDX11::init(Engine *e, int win_w, int win_h,
     if (!_create_shaders())                                return false;
     if (!_create_states())                                 return false;
     if (!_create_buffers())                                return false;
+    if (!_create_effect_cb())                              return false;
 
     // Configuração do estado fixo do pipeline de renderização.
     ctx_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -484,6 +576,23 @@ bool RendererDX11::init(Engine *e, int win_w, int win_h,
 void RendererDX11::destroy(Engine *)
 {
     if (ctx_) ctx_->ClearState();
+
+    /* Libera FBOs */
+    for (uint32_t i = 0; i < DX11_MAX_FBOS; ++i) {
+        if (!fbos_[i].in_use) continue;
+        _safe_release(fbos_[i].srv);
+        _safe_release(fbos_[i].rtv);
+        _safe_release(fbos_[i].tex);
+        fbos_[i] = {};
+    }
+
+    /* Libera shaders de efeito */
+    for (uint32_t i = 0; i < DX11_MAX_SHADERS; ++i) {
+        if (!shader_programs_[i].in_use) continue;
+        _safe_release(shader_programs_[i].ps);
+        shader_programs_[i] = {};
+    }
+    _safe_release(cb_effect_);
 
     for (uint32_t i = 0; i < DX11_MAX_TEXTURES; ++i) {
         if (!textures_[i].in_use) continue;
@@ -946,6 +1055,349 @@ void RendererDX11::poll_events(Engine *e)
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
+}
+
+/* ============================================================================
+ * _create_effect_cb
+ * Cria o constant buffer de efeito (b1) compartilhado por todos os pixel
+ * shaders de efeito.  64 bytes (4 × float4), alinhados a 16 bytes.
+ * ========================================================================== */
+bool RendererDX11::_create_effect_cb()
+{
+    D3D11_BUFFER_DESC bd{};
+    bd.ByteWidth      = sizeof(DxEffectCB);
+    bd.Usage          = D3D11_USAGE_DYNAMIC;
+    bd.BindFlags      = D3D11_BIND_CONSTANT_BUFFER;
+    bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    HRESULT hr = device_->CreateBuffer(&bd, nullptr, &cb_effect_);
+    if (FAILED(hr)) {
+        fprintf(stderr, "RendererDX11: falha ao criar EffectCB (0x%lx)\n", hr);
+        return false;
+    }
+    memset(&effect_cb_cpu_, 0, sizeof(effect_cb_cpu_));
+    return true;
+}
+
+void RendererDX11::_update_effect_cb()
+{
+    if (!cb_effect_) return;
+    D3D11_MAPPED_SUBRESOURCE ms{};
+    if (SUCCEEDED(ctx_->Map(cb_effect_, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+        memcpy(ms.pData, &effect_cb_cpu_, sizeof(effect_cb_cpu_));
+        ctx_->Unmap(cb_effect_, 0);
+    }
+    ctx_->PSSetConstantBuffers(1, 1, &cb_effect_);
+}
+
+/* ============================================================================
+ * FBO — Framebuffer Objects via D3D11 Render Targets
+ * ========================================================================== */
+
+FboHandle RendererDX11::fbo_create(Engine *e, int w, int h)
+{
+    /* Encontra slot livre */
+    int slot = -1;
+    for (int i = 0; i < (int)DX11_MAX_FBOS; ++i)
+        if (!fbos_[i].in_use) { slot = i; break; }
+    if (slot < 0) {
+        fprintf(stderr, "RendererDX11: pool de FBOs esgotado\n");
+        return ENGINE_FBO_INVALID;
+    }
+
+    /* Cria a textura como render target + shader resource */
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width            = static_cast<UINT>(w);
+    td.Height           = static_cast<UINT>(h);
+    td.MipLevels        = 1;
+    td.ArraySize        = 1;
+    td.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage            = D3D11_USAGE_DEFAULT;
+    td.BindFlags        = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+
+    HRESULT hr = device_->CreateTexture2D(&td, nullptr, &fbos_[slot].tex);
+    if (FAILED(hr)) {
+        fprintf(stderr, "RendererDX11: CreateTexture2D FBO falhou (0x%lx)\n", hr);
+        return ENGINE_FBO_INVALID;
+    }
+
+    /* Render Target View */
+    hr = device_->CreateRenderTargetView(fbos_[slot].tex, nullptr, &fbos_[slot].rtv);
+    if (FAILED(hr)) {
+        _safe_release(fbos_[slot].tex); fbos_[slot].tex = nullptr;
+        fprintf(stderr, "RendererDX11: CreateRenderTargetView FBO falhou (0x%lx)\n", hr);
+        return ENGINE_FBO_INVALID;
+    }
+
+    /* Shader Resource View — para uso como textura nos draw calls normais */
+    D3D11_SHADER_RESOURCE_VIEW_DESC srvd{};
+    srvd.Format                    = DXGI_FORMAT_R8G8B8A8_UNORM;
+    srvd.ViewDimension             = D3D11_SRV_DIMENSION_TEXTURE2D;
+    srvd.Texture2D.MipLevels       = 1;
+    hr = device_->CreateShaderResourceView(fbos_[slot].tex, &srvd, &fbos_[slot].srv);
+    if (FAILED(hr)) {
+        _safe_release(fbos_[slot].rtv); fbos_[slot].rtv = nullptr;
+        _safe_release(fbos_[slot].tex); fbos_[slot].tex = nullptr;
+        fprintf(stderr, "RendererDX11: CreateShaderResourceView FBO falhou (0x%lx)\n", hr);
+        return ENGINE_FBO_INVALID;
+    }
+
+    /* Registra a SRV no pool de texturas compartilhado para uso com set_texture() */
+    uint32_t tex_slot = _alloc_tex_slot();
+    if (tex_slot == UINT32_MAX) {
+        fprintf(stderr, "RendererDX11: pool de texturas esgotado ao criar FBO\n");
+        _safe_release(fbos_[slot].srv); fbos_[slot].srv = nullptr;
+        _safe_release(fbos_[slot].rtv); fbos_[slot].rtv = nullptr;
+        _safe_release(fbos_[slot].tex); fbos_[slot].tex = nullptr;
+        return ENGINE_FBO_INVALID;
+    }
+    textures_[tex_slot].srv    = fbos_[slot].srv;
+    textures_[tex_slot].tex    = nullptr;   /* gerenciado pelo FBO, não pelo pool */
+    textures_[tex_slot].in_use = true;
+
+    fbos_[slot].handle = tex_slot + 1;   /* handle público = índice + 1 */
+    fbos_[slot].width  = w;
+    fbos_[slot].height = h;
+    fbos_[slot].in_use = true;
+
+    /* Expõe via Engine para que engine_fbo_texture() funcione no Lua */
+    if (slot < ENGINE_MAX_FBOS) {
+        e->fbos[slot].fbo_id    = static_cast<unsigned int>(slot);
+        e->fbos[slot].color_tex = fbos_[slot].handle;
+        e->fbos[slot].width     = w;
+        e->fbos[slot].height    = h;
+        e->fbos[slot].in_use    = 1;
+    }
+
+    return static_cast<FboHandle>(slot);
+}
+
+void RendererDX11::fbo_destroy(Engine *e, FboHandle fh)
+{
+    if (fh < 0 || fh >= (int)DX11_MAX_FBOS || !fbos_[fh].in_use) return;
+    _flush_internal();
+
+    /* Remove do pool de texturas compartilhado */
+    uint32_t tex_idx = fbos_[fh].handle - 1;
+    if (tex_idx < DX11_MAX_TEXTURES) {
+        textures_[tex_idx].srv    = nullptr;  /* SRV liberado abaixo via DxFbo */
+        textures_[tex_idx].in_use = false;
+    }
+
+    _safe_release(fbos_[fh].srv);
+    _safe_release(fbos_[fh].rtv);
+    _safe_release(fbos_[fh].tex);
+    fbos_[fh] = {};
+
+    if (fh < ENGINE_MAX_FBOS)
+        e->fbos[fh].in_use = 0;
+}
+
+void RendererDX11::fbo_bind(Engine *e, FboHandle fh)
+{
+    if (fh < 0 || fh >= (int)DX11_MAX_FBOS || !fbos_[fh].in_use) return;
+    _flush_internal();
+
+    /* Substitui o render target pelo RTV do FBO */
+    ctx_->OMSetRenderTargets(1, &fbos_[fh].rtv, nullptr);
+
+    /* Viewport com as dimensões do FBO */
+    D3D11_VIEWPORT vp{};
+    vp.Width    = static_cast<float>(fbos_[fh].width);
+    vp.Height   = static_cast<float>(fbos_[fh].height);
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+
+    /* Projeção ortográfica ajustada ao tamanho do FBO */
+    DxOrthoVS fbo_ortho = ortho_;
+    fbo_ortho.inv_w    = 2.0f / static_cast<float>(fbos_[fh].width);
+    fbo_ortho.inv_h    = 2.0f / static_cast<float>(fbos_[fh].height);
+    fbo_ortho.cam_tx   = 0.0f;
+    fbo_ortho.cam_ty   = 0.0f;
+    fbo_ortho.cam_zoom = 1.0f;
+
+    D3D11_MAPPED_SUBRESOURCE ms{};
+    if (SUCCEEDED(ctx_->Map(cb_vs_, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms))) {
+        memcpy(ms.pData, &fbo_ortho, sizeof(DxOrthoVS));
+        ctx_->Unmap(cb_vs_, 0);
+    }
+    ctx_->VSSetConstantBuffers(0, 1, &cb_vs_);
+
+    /* Limpa o FBO com cor transparente */
+    float clear[4] = {0, 0, 0, 0};
+    ctx_->ClearRenderTargetView(fbos_[fh].rtv, clear);
+    (void)e;
+}
+
+void RendererDX11::fbo_unbind(Engine *e)
+{
+    _flush_internal();
+    /* Restaura o render target da tela */
+    ctx_->OMSetRenderTargets(1, &rtv_, nullptr);
+    /* Restaura viewport e projeção */
+    D3D11_VIEWPORT vp{};
+    vp.Width    = static_cast<float>(e->win_w);
+    vp.Height   = static_cast<float>(e->win_h);
+    vp.MaxDepth = 1.0f;
+    ctx_->RSSetViewports(1, &vp);
+    _update_cb();
+}
+
+unsigned int RendererDX11::fbo_texture(Engine *e, FboHandle fh)
+{
+    if (fh < 0 || fh >= (int)DX11_MAX_FBOS || !fbos_[fh].in_use) return 0;
+    (void)e;
+    return fbos_[fh].handle;
+}
+
+/* ============================================================================
+ * Shaders de Efeito
+ *
+ * No DX11 só trocamos o pixel shader — o vertex shader é sempre k_hlsl_vs.
+ * O EffectCB (b1) carrega até 4×float4 de parâmetros uniformes.
+ * ========================================================================== */
+
+/* Retorna (ou registra) o slot inteiro de uniform em u_params[] pelo nome */
+int RendererDX11::_shader_uniform_slot(DxShaderProgram &prog, const char *name)
+{
+    for (int i = 0; i < prog.uniform_count; ++i)
+        if (strcmp(prog.uniforms[i].name, name) == 0)
+            return prog.uniforms[i].slot;
+    if (prog.uniform_count >= 8) return -1;
+    int slot = prog.uniform_count;
+    strncpy(prog.uniforms[slot].name, name, 31);
+    prog.uniforms[slot].slot = slot;
+    ++prog.uniform_count;
+    return slot;
+}
+
+/* Compila um pixel shader HLSL e o registra no pool */
+ShaderHandle RendererDX11::shader_create(Engine *e, const char *vert_src, const char *frag_src)
+{
+    (void)vert_src;  /* DX11: vertex shader é sempre k_hlsl_vs */
+    (void)e;
+
+    /* Encontra slot livre */
+    int slot = -1;
+    for (int i = 0; i < (int)DX11_MAX_SHADERS; ++i)
+        if (!shader_programs_[i].in_use) { slot = i; break; }
+    if (slot < 0) {
+        fprintf(stderr, "RendererDX11: pool de shaders esgotado\n");
+        return ENGINE_SHADER_INVALID;
+    }
+
+    /* Detecta se frag_src é um dos aliases Lua e redireciona ao HLSL correto */
+    const char *hlsl_src = frag_src;
+    /* Os shaders Lua vêm em GLSL; para DX11 detectamos pela presença de
+     * palavras-chave GLSL e escolhemos o equivalente HLSL pré-compilado.  */
+    bool is_glsl = (strstr(frag_src, "gl_FragColor") != nullptr ||
+                    strstr(frag_src, "texture2D")     != nullptr ||
+                    strstr(frag_src, "varying")       != nullptr);
+    if (is_glsl) {
+        /* Mapeamento heurístico GLSL → HLSL por palavras-chave */
+        if      (strstr(frag_src, "lum")    && strstr(frag_src, "0.299")) hlsl_src = k_hlsl_ps_gray;
+        else if (strstr(frag_src, "1.0 -")  || strstr(frag_src, "1.0-"))  hlsl_src = k_hlsl_ps_invert;
+        else if (strstr(frag_src, "u_tint"))                               hlsl_src = k_hlsl_ps_tint;
+        else if (strstr(frag_src, "u_offset"))                             hlsl_src = k_hlsl_ps_aberr;
+        else if (strstr(frag_src, "scanline") || strstr(frag_src,"vinheta")) hlsl_src = k_hlsl_ps_crt;
+        else {
+            fprintf(stderr, "RendererDX11: shader GLSL sem equivalente HLSL. Forneça HLSL diretamente.\n");
+            return ENGINE_SHADER_INVALID;
+        }
+    }
+
+    ID3DBlob *ps_blob = nullptr, *err = nullptr;
+    HRESULT hr = D3DCompile(hlsl_src, strlen(hlsl_src), "effect_ps",
+                             nullptr, nullptr, "main", "ps_4_0",
+                             D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+                             &ps_blob, &err);
+    if (FAILED(hr)) {
+        fprintf(stderr, "RendererDX11 effect PS compile error:\n%s\n",
+                err ? static_cast<char*>(err->GetBufferPointer()) : "?");
+        _safe_release(err);
+        return ENGINE_SHADER_INVALID;
+    }
+    _safe_release(err);
+
+    hr = device_->CreatePixelShader(ps_blob->GetBufferPointer(),
+                                     ps_blob->GetBufferSize(),
+                                     nullptr, &shader_programs_[slot].ps);
+    _safe_release(ps_blob);
+    if (FAILED(hr)) {
+        fprintf(stderr, "RendererDX11: CreatePixelShader falhou (0x%lx)\n", hr);
+        return ENGINE_SHADER_INVALID;
+    }
+
+    shader_programs_[slot].in_use       = true;
+    shader_programs_[slot].uniform_count = 0;
+    return static_cast<ShaderHandle>(slot);
+}
+
+void RendererDX11::shader_destroy(Engine *e, ShaderHandle sh)
+{
+    if (sh < 0 || sh >= (int)DX11_MAX_SHADERS || !shader_programs_[sh].in_use) return;
+    _flush_internal();
+    if (active_shader_ == sh) shader_none(e);
+    _safe_release(shader_programs_[sh].ps);
+    shader_programs_[sh] = {};
+}
+
+void RendererDX11::shader_use(Engine *e, ShaderHandle sh)
+{
+    if (sh < 0 || sh >= (int)DX11_MAX_SHADERS || !shader_programs_[sh].in_use) return;
+    _flush_internal();
+    ctx_->PSSetShader(shader_programs_[sh].ps, nullptr, 0);
+    _update_effect_cb();
+    active_shader_ = sh;
+    e->active_shader = sh;
+}
+
+void RendererDX11::shader_none(Engine *e)
+{
+    _flush_internal();
+    ctx_->PSSetShader(ps_, nullptr, 0);  /* restaura o PS padrão */
+    active_shader_ = -1;
+    e->active_shader = ENGINE_SHADER_INVALID;
+}
+
+/* Helpers para escrever no EffectCB via slot de uniform */
+void RendererDX11::shader_set_int(Engine *e, ShaderHandle sh, const char *name, int v)
+{
+    shader_set_float(e, sh, name, static_cast<float>(v));
+}
+
+void RendererDX11::shader_set_float(Engine *e, ShaderHandle sh, const char *name, float v)
+{
+    if (sh < 0 || sh >= (int)DX11_MAX_SHADERS || !shader_programs_[sh].in_use) return;
+    int slot = _shader_uniform_slot(shader_programs_[sh], name);
+    if (slot < 0) return;
+    effect_cb_cpu_.params[slot * 4] = v;
+    if (active_shader_ == sh) _update_effect_cb();
+    (void)e;
+}
+
+void RendererDX11::shader_set_vec2(Engine *e, ShaderHandle sh, const char *name, float x, float y)
+{
+    if (sh < 0 || sh >= (int)DX11_MAX_SHADERS || !shader_programs_[sh].in_use) return;
+    int slot = _shader_uniform_slot(shader_programs_[sh], name);
+    if (slot < 0) return;
+    effect_cb_cpu_.params[slot * 4 + 0] = x;
+    effect_cb_cpu_.params[slot * 4 + 1] = y;
+    if (active_shader_ == sh) _update_effect_cb();
+    (void)e;
+}
+
+void RendererDX11::shader_set_vec4(Engine *e, ShaderHandle sh, const char *name, float x, float y, float z, float w)
+{
+    if (sh < 0 || sh >= (int)DX11_MAX_SHADERS || !shader_programs_[sh].in_use) return;
+    int slot = _shader_uniform_slot(shader_programs_[sh], name);
+    if (slot < 0) return;
+    effect_cb_cpu_.params[slot * 4 + 0] = x;
+    effect_cb_cpu_.params[slot * 4 + 1] = y;
+    effect_cb_cpu_.params[slot * 4 + 2] = z;
+    effect_cb_cpu_.params[slot * 4 + 3] = w;
+    if (active_shader_ == sh) _update_effect_cb();
+    (void)e;
 }
 
 #endif /* ENGINE_BACKEND_DX11 */

@@ -190,6 +190,32 @@ static void _png_cache_clear()
 #ifndef GL_DYNAMIC_DRAW
 #  define GL_DYNAMIC_DRAW  0x88E8
 #endif
+/* GLSL / shader */
+#ifndef GL_FRAGMENT_SHADER
+#  define GL_FRAGMENT_SHADER  0x8B30
+#endif
+#ifndef GL_VERTEX_SHADER
+#  define GL_VERTEX_SHADER    0x8B31
+#endif
+#ifndef GL_COMPILE_STATUS
+#  define GL_COMPILE_STATUS   0x8B81
+#endif
+#ifndef GL_LINK_STATUS
+#  define GL_LINK_STATUS      0x8B82
+#endif
+#ifndef GL_INFO_LOG_LENGTH
+#  define GL_INFO_LOG_LENGTH  0x8B84
+#endif
+/* FBO */
+#ifndef GL_FRAMEBUFFER
+#  define GL_FRAMEBUFFER       0x8D40
+#endif
+#ifndef GL_COLOR_ATTACHMENT0
+#  define GL_COLOR_ATTACHMENT0 0x8CE0
+#endif
+#ifndef GL_FRAMEBUFFER_COMPLETE
+#  define GL_FRAMEBUFFER_COMPLETE 0x8CD5
+#endif
 #if !defined(GL_VERSION_1_5)
 typedef ptrdiff_t GLsizeiptr;
 typedef ptrdiff_t GLintptr;
@@ -199,6 +225,35 @@ typedef void (*PFNGLGENBUFFERSPROC)   (GLsizei, GLuint *);
 typedef void (*PFNGLBINDBUFFERPROC)   (GLenum, GLuint);
 typedef void (*PFNGLBUFFERDATAPROC)   (GLenum, GLsizeiptr, const void *, GLenum);
 typedef void (*PFNGLDELETEBUFFERSPROC)(GLsizei, const GLuint *);
+
+/* ---- Tipos de função GLSL (OpenGL 2.0) ----------------------------------- */
+typedef GLuint (*PFNGLCREATESHADERPROC)      (GLenum);
+#ifndef PFNGLSHADERSOURCEPROC
+typedef void   (*PFNGLSHADERSOURCEPROC)      (GLuint, GLsizei, const GLchar *const*, const GLint *);
+#endif
+typedef void   (*PFNGLCOMPILESHADERPROC)     (GLuint);
+typedef void   (*PFNGLGETSHADERIVPROC)       (GLuint, GLenum, GLint *);
+typedef void   (*PFNGLGETSHADERINFOLOGPROC)  (GLuint, GLsizei, GLsizei *, char *);
+typedef GLuint (*PFNGLCREATEPROGRAMPROC)     (void);
+typedef void   (*PFNGLATTACHSHADERPROC)      (GLuint, GLuint);
+typedef void   (*PFNGLLINKPROGRAMPROC)       (GLuint);
+typedef void   (*PFNGLGETPROGRAMIVPROC)      (GLuint, GLenum, GLint *);
+typedef void   (*PFNGLGETPROGRAMINFOLOGPROC) (GLuint, GLsizei, GLsizei *, char *);
+typedef void   (*PFNGLUSEPROGRAMPROC)        (GLuint);
+typedef void   (*PFNGLDELETESHADERPROC)      (GLuint);
+typedef void   (*PFNGLDELETEPROGRAMPROC)     (GLuint);
+typedef GLint  (*PFNGLGETUNIFORMLOCATIONPROC)(GLuint, const char *);
+typedef void   (*PFNGLUNIFORM1IPROC)         (GLint, GLint);
+typedef void   (*PFNGLUNIFORM1FPROC)         (GLint, GLfloat);
+typedef void   (*PFNGLUNIFORM2FPROC)         (GLint, GLfloat, GLfloat);
+typedef void   (*PFNGLUNIFORM4FPROC)         (GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+
+/* ---- Tipos de função FBO (GL_EXT_framebuffer_object / OpenGL 3.0) -------- */
+typedef void (*PFNGLGENFRAMEBUFFERSPROC)        (GLsizei, GLuint *);
+typedef void (*PFNGLBINDFRAMEBUFFERPROC)        (GLenum,  GLuint);
+typedef void (*PFNGLFRAMEBUFFERTEXTURE2DPROC)   (GLenum,  GLenum, GLenum, GLuint, GLint);
+typedef GLenum (*PFNGLCHECKFRAMEBUFFERSTATUSPROC)(GLenum);
+typedef void (*PFNGLDELETEFRAMEBUFFERSPROC)     (GLsizei, const GLuint *);
 
 /* Capacidade e layout do buffer de vértices do batch */
 static constexpr int BATCH_MAX_QUADS         = 4096;
@@ -283,6 +338,35 @@ public:
     PFNGLBUFFERDATAPROC    glBufferData_f    = nullptr;
     PFNGLDELETEBUFFERSPROC glDeleteBuffers_f = nullptr;
 
+    /* Procs Shader GLSL */
+    PFNGLCREATESHADERPROC       glCreateShader_f       = nullptr;
+    PFNGLSHADERSOURCEPROC       glShaderSource_f       = nullptr;
+    PFNGLCOMPILESHADERPROC      glCompileShader_f      = nullptr;
+    PFNGLGETSHADERIVPROC        glGetShaderiv_f        = nullptr;
+    PFNGLGETSHADERINFOLOGPROC   glGetShaderInfoLog_f   = nullptr;
+    PFNGLCREATEPROGRAMPROC      glCreateProgram_f      = nullptr;
+    PFNGLATTACHSHADERPROC       glAttachShader_f       = nullptr;
+    PFNGLLINKPROGRAMPROC        glLinkProgram_f        = nullptr;
+    PFNGLGETPROGRAMIVPROC       glGetProgramiv_f       = nullptr;
+    PFNGLGETPROGRAMINFOLOGPROC  glGetProgramInfoLog_f  = nullptr;
+    PFNGLUSEPROGRAMPROC         glUseProgram_f         = nullptr;
+    PFNGLDELETESHADERPROC       glDeleteShader_f       = nullptr;
+    PFNGLDELETEPROGRAMPROC      glDeleteProgram_f      = nullptr;
+    PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation_f = nullptr;
+    PFNGLUNIFORM1IPROC          glUniform1i_f          = nullptr;
+    PFNGLUNIFORM1FPROC          glUniform1f_f          = nullptr;
+    PFNGLUNIFORM2FPROC          glUniform2f_f          = nullptr;
+    PFNGLUNIFORM4FPROC          glUniform4f_f          = nullptr;
+    bool                        shaders_supported      = false;
+
+    /* Procs FBO */
+    PFNGLGENFRAMEBUFFERSPROC         glGenFramebuffers_f         = nullptr;
+    PFNGLBINDFRAMEBUFFERPROC         glBindFramebuffer_f         = nullptr;
+    PFNGLFRAMEBUFFERTEXTURE2DPROC    glFramebufferTexture2D_f    = nullptr;
+    PFNGLCHECKFRAMEBUFFERSTATUSPROC  glCheckFramebufferStatus_f  = nullptr;
+    PFNGLDELETEFRAMEBUFFERSPROC      glDeleteFramebuffers_f      = nullptr;
+    bool                             fbo_supported               = false;
+
     BatchState batch       = {};
     bool       batch_ready = false;
     GLuint     last_tex    = 0;
@@ -326,8 +410,36 @@ public:
     void set_clear_color   (float r, float g, float b)      override;
     void poll_events    (Engine *e)                         override;
 
+    /* FBO */
+    FboHandle    fbo_create (Engine *e, int w, int h)       override;
+    void         fbo_destroy(Engine *e, FboHandle fh)       override;
+    void         fbo_bind   (Engine *e, FboHandle fh)       override;
+    void         fbo_unbind (Engine *e)                     override;
+    unsigned int fbo_texture(Engine *e, FboHandle fh)       override;
+
+    /* Shaders */
+    ShaderHandle shader_create (Engine *e,
+                                const char *vert_src,
+                                const char *frag_src)       override;
+    void         shader_destroy(Engine *e, ShaderHandle sh) override;
+    void         shader_use    (Engine *e, ShaderHandle sh) override;
+    void         shader_none   (Engine *e)                  override;
+    void         shader_set_int  (Engine *e, ShaderHandle sh,
+                                  const char *name, int   v) override;
+    void         shader_set_float(Engine *e, ShaderHandle sh,
+                                  const char *name, float v) override;
+    void         shader_set_vec2 (Engine *e, ShaderHandle sh,
+                                  const char *name,
+                                  float x, float y)          override;
+    void         shader_set_vec4 (Engine *e, ShaderHandle sh,
+                                  const char *name,
+                                  float x, float y,
+                                  float z, float w)          override;
+
 private:
     bool _load_vbo_procs();
+    bool _load_shader_procs();
+    bool _load_fbo_procs();
     void _batch_init();
     void _batch_flush_internal();
     void _batch_set_texture(unsigned int tex);
@@ -425,6 +537,11 @@ bool RendererGL::init(Engine *e, int win_w, int win_h,
         return false;
     }
 
+    /* Tenta carregar shaders e FBOs — falha silenciosa (recursos opcionais) */
+    _load_shader_procs();
+    _load_fbo_procs();
+    e->active_shader = ENGINE_SHADER_INVALID;
+
     /* Estado OpenGL inicial: blending alpha, sem depth test, sem cull face */
     glEnable(GL_TEXTURE_2D);
     glEnable(GL_BLEND);
@@ -454,6 +571,27 @@ void RendererGL::destroy(Engine *e)
 {
     if (!display) return;
     glXMakeCurrent(display, window, glx_ctx);
+
+    /* Libera FBOs e Shaders antes de destruir sprites e contexto */
+    if (fbo_supported) {
+        for (int i = 0; i < ENGINE_MAX_FBOS; ++i) {
+            if (e->fbos[i].in_use) {
+                GLuint fid = static_cast<GLuint>(e->fbos[i].fbo_id);
+                GLuint tid = static_cast<GLuint>(e->fbos[i].color_tex);
+                glDeleteFramebuffers_f(1, &fid);
+                glDeleteTextures(1, &tid);
+                e->fbos[i].in_use = 0;
+            }
+        }
+    }
+    if (shaders_supported) {
+        for (int i = 0; i < ENGINE_MAX_SHADERS; ++i) {
+            if (e->shaders[i].in_use) {
+                glDeleteProgram_f(static_cast<GLuint>(e->shaders[i].program));
+                e->shaders[i].in_use = 0;
+            }
+        }
+    }
 
     /* Descarrega o VBO antes de destruir o contexto GL */
     if (batch_ready) {
@@ -796,6 +934,226 @@ void RendererGL::poll_events(Engine *e)
 }
 
 /* ---- Privados ------------------------------------------------------------- */
+/* ---- RendererGL — FBO ----------------------------------------------------- */
+
+FboHandle RendererGL::fbo_create(Engine *e, int w, int h)
+{
+    if (!fbo_supported) {
+        fprintf(stderr, "Engine: FBO não suportado neste driver.\n");
+        return ENGINE_FBO_INVALID;
+    }
+    /* Encontra slot livre */
+    int slot = ENGINE_FBO_INVALID;
+    for (int i = 0; i < ENGINE_MAX_FBOS; ++i)
+        if (!e->fbos[i].in_use) { slot = i; break; }
+    if (slot == ENGINE_FBO_INVALID) {
+        fprintf(stderr, "Engine: pool de FBOs esgotado.\n");
+        return ENGINE_FBO_INVALID;
+    }
+
+    /* Cria textura de cor */
+    GLuint color_tex;
+    glGenTextures(1, &color_tex);
+    glBindTexture(GL_TEXTURE_2D, color_tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+
+    /* Cria FBO e anexa a textura */
+    GLuint fbo_id;
+    glGenFramebuffers_f(1, &fbo_id);
+    glBindFramebuffer_f(GL_FRAMEBUFFER, fbo_id);
+    glFramebufferTexture2D_f(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                              GL_TEXTURE_2D, color_tex, 0);
+
+    GLenum status = glCheckFramebufferStatus_f(GL_FRAMEBUFFER);
+    glBindFramebuffer_f(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        fprintf(stderr, "Engine: FBO incompleto (status=0x%x).\n", status);
+        glDeleteFramebuffers_f(1, &fbo_id);
+        glDeleteTextures(1, &color_tex);
+        return ENGINE_FBO_INVALID;
+    }
+
+    FboData &fd   = e->fbos[slot];
+    fd.fbo_id     = static_cast<unsigned int>(fbo_id);
+    fd.color_tex  = static_cast<unsigned int>(color_tex);
+    fd.width      = w;
+    fd.height     = h;
+    fd.in_use     = 1;
+    return static_cast<FboHandle>(slot);
+}
+
+void RendererGL::fbo_destroy(Engine *e, FboHandle fh)
+{
+    if (!fbo_supported || fh < 0 || fh >= ENGINE_MAX_FBOS || !e->fbos[fh].in_use) return;
+    _batch_flush_internal();
+    FboData &fd = e->fbos[fh];
+    GLuint fid  = static_cast<GLuint>(fd.fbo_id);
+    GLuint tid  = static_cast<GLuint>(fd.color_tex);
+    glDeleteFramebuffers_f(1, &fid);
+    glDeleteTextures(1, &tid);
+    fd.in_use = 0;
+}
+
+void RendererGL::fbo_bind(Engine *e, FboHandle fh)
+{
+    if (!fbo_supported || fh < 0 || fh >= ENGINE_MAX_FBOS || !e->fbos[fh].in_use) return;
+    _batch_flush_internal();
+    const FboData &fd = e->fbos[fh];
+    glBindFramebuffer_f(GL_FRAMEBUFFER, static_cast<GLuint>(fd.fbo_id));
+    glViewport(0, 0, fd.width, fd.height);
+    /* Ajusta projeção ortográfica para o tamanho do FBO */
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    glOrtho(0.0, fd.width, fd.height, 0.0, -1.0, 1.0);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+void RendererGL::fbo_unbind(Engine *e)
+{
+    if (!fbo_supported) return;
+    _batch_flush_internal();
+    glBindFramebuffer_f(GL_FRAMEBUFFER, 0);
+    setup_projection(e);   /* restaura viewport e projeção da janela */
+}
+
+unsigned int RendererGL::fbo_texture(Engine *e, FboHandle fh)
+{
+    if (fh < 0 || fh >= ENGINE_MAX_FBOS || !e->fbos[fh].in_use) return 0;
+    return e->fbos[fh].color_tex;
+}
+
+/* ---- RendererGL — Shaders ------------------------------------------------- */
+
+static GLuint _compile_shader(RendererGL *r, GLenum type, const char *src)
+{
+    GLuint s = r->glCreateShader_f(type);
+    r->glShaderSource_f(s, 1, &src, nullptr);
+    r->glCompileShader_f(s);
+    GLint ok = 0;
+    r->glGetShaderiv_f(s, GL_COMPILE_STATUS, &ok);
+    if (!ok) {
+        char log[512];
+        r->glGetShaderInfoLog_f(s, sizeof(log), nullptr, log);
+        fprintf(stderr, "Engine shader compile error:\n%s\n", log);
+        r->glDeleteShader_f(s);
+        return 0;
+    }
+    return s;
+}
+
+ShaderHandle RendererGL::shader_create(Engine *e, const char *vert_src, const char *frag_src)
+{
+    if (!shaders_supported) {
+        fprintf(stderr, "Engine: shaders GLSL não suportados.\n");
+        return ENGINE_SHADER_INVALID;
+    }
+    int slot = ENGINE_SHADER_INVALID;
+    for (int i = 0; i < ENGINE_MAX_SHADERS; ++i)
+        if (!e->shaders[i].in_use) { slot = i; break; }
+    if (slot == ENGINE_SHADER_INVALID) {
+        fprintf(stderr, "Engine: pool de shaders esgotado.\n");
+        return ENGINE_SHADER_INVALID;
+    }
+
+    GLuint vs = _compile_shader(this, GL_VERTEX_SHADER,   vert_src);
+    GLuint fs = _compile_shader(this, GL_FRAGMENT_SHADER, frag_src);
+    if (!vs || !fs) {
+        if (vs) glDeleteShader_f(vs);
+        if (fs) glDeleteShader_f(fs);
+        return ENGINE_SHADER_INVALID;
+    }
+
+    GLuint prog = glCreateProgram_f();
+    glAttachShader_f(prog, vs);
+    glAttachShader_f(prog, fs);
+    glLinkProgram_f(prog);
+
+    GLint ok = 0;
+    glGetProgramiv_f(prog, GL_LINK_STATUS, &ok);
+    glDeleteShader_f(vs);
+    glDeleteShader_f(fs);
+    if (!ok) {
+        char log[512];
+        glGetProgramInfoLog_f(prog, sizeof(log), nullptr, log);
+        fprintf(stderr, "Engine shader link error:\n%s\n", log);
+        glDeleteProgram_f(prog);
+        return ENGINE_SHADER_INVALID;
+    }
+
+    e->shaders[slot].program = static_cast<unsigned int>(prog);
+    e->shaders[slot].in_use  = 1;
+    return static_cast<ShaderHandle>(slot);
+}
+
+void RendererGL::shader_destroy(Engine *e, ShaderHandle sh)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    _batch_flush_internal();
+    if (e->active_shader == sh) {
+        glUseProgram_f(0);
+        e->active_shader = ENGINE_SHADER_INVALID;
+    }
+    glDeleteProgram_f(static_cast<GLuint>(e->shaders[sh].program));
+    e->shaders[sh].in_use = 0;
+}
+
+void RendererGL::shader_use(Engine *e, ShaderHandle sh)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    _batch_flush_internal();
+    glUseProgram_f(static_cast<GLuint>(e->shaders[sh].program));
+    e->active_shader = sh;
+}
+
+void RendererGL::shader_none(Engine *e)
+{
+    if (!shaders_supported) return;
+    _batch_flush_internal();
+    glUseProgram_f(0);
+    e->active_shader = ENGINE_SHADER_INVALID;
+}
+
+void RendererGL::shader_set_int(Engine *e, ShaderHandle sh, const char *name, int v)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    GLuint prog = static_cast<GLuint>(e->shaders[sh].program);
+    GLint  loc  = glGetUniformLocation_f(prog, name);
+    if (loc >= 0) glUniform1i_f(loc, v);
+}
+
+void RendererGL::shader_set_float(Engine *e, ShaderHandle sh, const char *name, float v)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    GLuint prog = static_cast<GLuint>(e->shaders[sh].program);
+    GLint  loc  = glGetUniformLocation_f(prog, name);
+    if (loc >= 0) glUniform1f_f(loc, v);
+}
+
+void RendererGL::shader_set_vec2(Engine *e, ShaderHandle sh, const char *name, float x, float y)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    GLuint prog = static_cast<GLuint>(e->shaders[sh].program);
+    GLint  loc  = glGetUniformLocation_f(prog, name);
+    if (loc >= 0) glUniform2f_f(loc, x, y);
+}
+
+void RendererGL::shader_set_vec4(Engine *e, ShaderHandle sh, const char *name, float x, float y, float z, float w)
+{
+    if (!shaders_supported || sh < 0 || sh >= ENGINE_MAX_SHADERS || !e->shaders[sh].in_use) return;
+    GLuint prog = static_cast<GLuint>(e->shaders[sh].program);
+    GLint  loc  = glGetUniformLocation_f(prog, name);
+    if (loc >= 0) glUniform4f_f(loc, x, y, z, w);
+}
+
+/* ---- RendererGL — carregamento de procs ----------------------------------- */
+
 bool RendererGL::_load_vbo_procs()
 {
     auto get = [](const char *name) {
@@ -811,6 +1169,63 @@ bool RendererGL::_load_vbo_procs()
         return false;
     }
     return true;
+}
+
+bool RendererGL::_load_shader_procs()
+{
+    auto get = [](const char *name) {
+        return glXGetProcAddressARB(reinterpret_cast<const GLubyte *>(name));
+    };
+#define LOAD(T, N) N##_f = reinterpret_cast<T>(get(#N))
+    LOAD(PFNGLCREATESHADERPROC,       glCreateShader);
+    LOAD(PFNGLSHADERSOURCEPROC,       glShaderSource);
+    LOAD(PFNGLCOMPILESHADERPROC,      glCompileShader);
+    LOAD(PFNGLGETSHADERIVPROC,        glGetShaderiv);
+    LOAD(PFNGLGETSHADERINFOLOGPROC,   glGetShaderInfoLog);
+    LOAD(PFNGLCREATEPROGRAMPROC,      glCreateProgram);
+    LOAD(PFNGLATTACHSHADERPROC,       glAttachShader);
+    LOAD(PFNGLLINKPROGRAMPROC,        glLinkProgram);
+    LOAD(PFNGLGETPROGRAMIVPROC,       glGetProgramiv);
+    LOAD(PFNGLGETPROGRAMINFOLOGPROC,  glGetProgramInfoLog);
+    LOAD(PFNGLUSEPROGRAMPROC,         glUseProgram);
+    LOAD(PFNGLDELETESHADERPROC,       glDeleteShader);
+    LOAD(PFNGLDELETEPROGRAMPROC,      glDeleteProgram);
+    LOAD(PFNGLGETUNIFORMLOCATIONPROC, glGetUniformLocation);
+    LOAD(PFNGLUNIFORM1IPROC,          glUniform1i);
+    LOAD(PFNGLUNIFORM1FPROC,          glUniform1f);
+    LOAD(PFNGLUNIFORM2FPROC,          glUniform2f);
+    LOAD(PFNGLUNIFORM4FPROC,          glUniform4f);
+#undef LOAD
+    shaders_supported = (glCreateShader_f  && glCreateProgram_f &&
+                          glUseProgram_f   && glGetUniformLocation_f);
+    if (!shaders_supported)
+        fprintf(stderr, "Engine: shaders GLSL não disponíveis (requer GL 2.0+).\n");
+    return shaders_supported;
+}
+
+bool RendererGL::_load_fbo_procs()
+{
+    auto get = [](const char *name) {
+        return glXGetProcAddressARB(reinterpret_cast<const GLubyte *>(name));
+    };
+    /* Tenta nomes ARB primeiro, depois sem sufixo (OpenGL 3.0 core) */
+    glGenFramebuffers_f = reinterpret_cast<PFNGLGENFRAMEBUFFERSPROC>(
+        get("glGenFramebuffersEXT") ? get("glGenFramebuffersEXT") : get("glGenFramebuffers"));
+    glBindFramebuffer_f = reinterpret_cast<PFNGLBINDFRAMEBUFFERPROC>(
+        get("glBindFramebufferEXT") ? get("glBindFramebufferEXT") : get("glBindFramebuffer"));
+    glFramebufferTexture2D_f = reinterpret_cast<PFNGLFRAMEBUFFERTEXTURE2DPROC>(
+        get("glFramebufferTexture2DEXT") ? get("glFramebufferTexture2DEXT") : get("glFramebufferTexture2D"));
+    glCheckFramebufferStatus_f = reinterpret_cast<PFNGLCHECKFRAMEBUFFERSTATUSPROC>(
+        get("glCheckFramebufferStatusEXT") ? get("glCheckFramebufferStatusEXT") : get("glCheckFramebufferStatus"));
+    glDeleteFramebuffers_f = reinterpret_cast<PFNGLDELETEFRAMEBUFFERSPROC>(
+        get("glDeleteFramebuffersEXT") ? get("glDeleteFramebuffersEXT") : get("glDeleteFramebuffers"));
+
+    fbo_supported = (glGenFramebuffers_f   && glBindFramebuffer_f &&
+                     glFramebufferTexture2D_f && glCheckFramebufferStatus_f &&
+                     glDeleteFramebuffers_f);
+    if (!fbo_supported)
+        fprintf(stderr, "Engine: FBO não disponível (requer GL_EXT_framebuffer_object ou GL 3.0+).\n");
+    return fbo_supported;
 }
 
 void RendererGL::_batch_init()
@@ -1157,6 +1572,10 @@ int engine_load_sprite_region(Engine *e, const char *path,
     return sid;
 }
 
+/* Forward declarations — definidas mais abaixo na seção Spatial Grid */
+static void _sg_insert_object(Engine *e, int oid);
+static void _sg_remove_object(Engine *e, int oid);
+
 /* --- Objetos --------------------------------------------------------------- */
 
 int engine_add_object(Engine *e, int x, int y, int sprite_id,
@@ -1178,6 +1597,8 @@ int engine_add_object(Engine *e, int x, int y, int sprite_id,
     obj->scale_y   = 1.0f;
     obj->alpha     = 1.0f;
     obj->z_order   = oid;
+    if (e->sgrid.enabled)
+        _sg_insert_object(e, oid);
     return oid;
 }
 
@@ -1197,11 +1618,21 @@ int engine_add_tile_object(Engine *e, int x, int y, int sprite_id,
 
 void engine_move_object(Engine *e, int oid, int dx, int dy)
 {
-    if (_oid_valid(e, oid)) { e->objects[oid].x += dx; e->objects[oid].y += dy; }
+    if (_oid_valid(e, oid)) {
+        if (e->sgrid.enabled) _sg_remove_object(e, oid);
+        e->objects[oid].x += dx;
+        e->objects[oid].y += dy;
+        if (e->sgrid.enabled) _sg_insert_object(e, oid);
+    }
 }
 void engine_set_object_pos(Engine *e, int oid, int x, int y)
 {
-    if (_oid_valid(e, oid)) { e->objects[oid].x = x; e->objects[oid].y = y; }
+    if (_oid_valid(e, oid)) {
+        if (e->sgrid.enabled) _sg_remove_object(e, oid);
+        e->objects[oid].x = x;
+        e->objects[oid].y = y;
+        if (e->sgrid.enabled) _sg_insert_object(e, oid);
+    }
 }
 void engine_set_object_sprite(Engine *e, int oid, int sprite_id)
 {
@@ -1259,7 +1690,10 @@ void engine_set_object_hitbox(Engine *e, int oid,
 }
 void engine_remove_object(Engine *e, int oid)
 {
-    if (_oid_valid(e, oid)) e->objects[oid].active = 0;
+    if (_oid_valid(e, oid)) {
+        if (e->sgrid.enabled) _sg_remove_object(e, oid);
+        e->objects[oid].active = 0;
+    }
 }
 
 /* ---- Câmera --------------------------------------------------------------- */
@@ -1328,6 +1762,13 @@ static void _get_hitbox(const Engine *e, int oid,
     }
 }
 
+/* Teste AABB puro — usado internamente por todas as funções de colisão */
+static inline int _aabb(int ax, int ay, int aw, int ah,
+                         int bx, int by, int bw, int bh)
+{
+    return (ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by) ? 1 : 0;
+}
+
 int engine_check_collision(Engine *e, int oid1, int oid2)
 {
     if (!_oid_valid(e, oid1) || !_oid_valid(e, oid2))           return 0;
@@ -1335,7 +1776,7 @@ int engine_check_collision(Engine *e, int oid1, int oid2)
     int ax, ay, aw, ah, bx, by, bw, bh;
     _get_hitbox(e, oid1, &ax, &ay, &aw, &ah);
     _get_hitbox(e, oid2, &bx, &by, &bw, &bh);
-    return (ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by) ? 1 : 0;
+    return _aabb(ax, ay, aw, ah, bx, by, bw, bh);
 }
 
 int engine_check_collision_rect(Engine *e, int oid, int rx, int ry, int rw, int rh)
@@ -1343,7 +1784,7 @@ int engine_check_collision_rect(Engine *e, int oid, int rx, int ry, int rw, int 
     if (!_oid_valid(e, oid) || !e->objects[oid].active) return 0;
     int ax, ay, aw, ah;
     _get_hitbox(e, oid, &ax, &ay, &aw, &ah);
-    return (ax < rx + rw && ax + aw > rx && ay < ry + rh && ay + ah > ry) ? 1 : 0;
+    return _aabb(ax, ay, aw, ah, rx, ry, rw, rh);
 }
 
 int engine_check_collision_point(Engine *e, int oid, int px, int py)
@@ -1352,6 +1793,290 @@ int engine_check_collision_point(Engine *e, int oid, int px, int py)
     int ax, ay, aw, ah;
     _get_hitbox(e, oid, &ax, &ay, &aw, &ah);
     return (px >= ax && px < ax + aw && py >= ay && py < ay + ah) ? 1 : 0;
+}
+
+/* =============================================================================
+ * Spatial Grid — implementação
+ *
+ * Arquitetura:
+ *   • Grid uniforme de COLS×ROWS células, cada uma de cell_size×cell_size px.
+ *   • SpatialCell.oids[] é um array fixo (sem heap) de no máximo
+ *     ENGINE_SGRID_BUCKET_CAP entradas.
+ *   • SpatialObjEntry rastreia em quais células cada objeto está inscrito
+ *     (máximo ENGINE_SGRID_OBJ_MAX_CELLS = 4; objetos grandes que cruzam
+ *     mais de 4 células são tratados pelo fallback bruto).
+ *   • Inserção: clamp das coordenadas da hitbox → loop sobre células cobertas.
+ *   • Remoção: percorre obj_cells[oid].cell_idx[] e remove o oid de cada célula.
+ *   • Query de rect: itera apenas as células sobrepostas, acumula candidatos
+ *     com deduplicação via bitmask em stack (seen[]).
+ *
+ * Complexidade:
+ *   insert/remove: O(k)   onde k = número de células cobertas pelo objeto (≤4)
+ *   query:         O(k·b) onde b = ocupação média da célula (ENGINE_SGRID_BUCKET_CAP)
+ *   vs. bruto:     O(N)   onde N = ENGINE_MAX_OBJECTS (256)
+ * ============================================================================= */
+
+/* Converte coordenada de mundo para índice de coluna/linha; clampado ao grid */
+static inline int _sg_col(const SpatialGrid *g, int wx)
+{
+    int c = wx / g->cell_size;
+    return c < 0 ? 0 : (c >= g->cols ? g->cols - 1 : c);
+}
+static inline int _sg_row(const SpatialGrid *g, int wy)
+{
+    int r = wy / g->cell_size;
+    return r < 0 ? 0 : (r >= g->rows ? g->rows - 1 : r);
+}
+static inline int _sg_idx(const SpatialGrid *g, int col, int row)
+{
+    return row * g->cols + col;
+}
+
+/* Remove oid de uma célula específica (busca linear; células pequenas) */
+static void _sg_cell_remove(SpatialCell *cell, int oid)
+{
+    for (int i = 0; i < cell->count; ++i) {
+        if (cell->oids[i] == oid) {
+            /* Substitui pela última entrada e reduz count */
+            cell->oids[i] = cell->oids[--cell->count];
+            return;
+        }
+    }
+}
+
+/* Insere oid numa célula; retorna 1 se ok, 0 se cheia */
+static int _sg_cell_insert(SpatialCell *cell, int oid)
+{
+    if (cell->count >= ENGINE_SGRID_BUCKET_CAP) return 0;
+    cell->oids[cell->count++] = oid;
+    return 1;
+}
+
+/*
+ * _sg_insert_object() — insere um objeto em todas as células que sua hitbox cobre.
+ * Limita-se a ENGINE_SGRID_OBJ_MAX_CELLS células; se o objeto for muito grande
+ * ultrapassa esse limite e apenas as primeiras células são registradas.
+ */
+static void _sg_insert_object(Engine *e, int oid)
+{
+    SpatialGrid *g = &e->sgrid;
+    SpatialObjEntry *entry = &g->obj_cells[oid];
+    entry->count = 0;
+
+    int hx, hy, hw, hh;
+    _get_hitbox(e, oid, &hx, &hy, &hw, &hh);
+
+    const int c0 = _sg_col(g, hx);
+    const int c1 = _sg_col(g, hx + hw - 1);
+    const int r0 = _sg_row(g, hy);
+    const int r1 = _sg_row(g, hy + hh - 1);
+
+    for (int r = r0; r <= r1 && entry->count < ENGINE_SGRID_OBJ_MAX_CELLS; ++r) {
+        for (int c = c0; c <= c1 && entry->count < ENGINE_SGRID_OBJ_MAX_CELLS; ++c) {
+            const int idx = _sg_idx(g, c, r);
+            if (_sg_cell_insert(&g->cells[idx], oid)) {
+                entry->cell_idx[entry->count++] = idx;
+            } else {
+                fprintf(stderr,
+                    "SpatialGrid: célula [%d,%d] cheia (cap=%d). Aumente ENGINE_SGRID_BUCKET_CAP.\n",
+                    c, r, ENGINE_SGRID_BUCKET_CAP);
+            }
+        }
+    }
+}
+
+/* Remove o objeto de todas as células onde está registrado */
+static void _sg_remove_object(Engine *e, int oid)
+{
+    SpatialGrid *g = &e->sgrid;
+    SpatialObjEntry *entry = &g->obj_cells[oid];
+    for (int i = 0; i < entry->count; ++i)
+        _sg_cell_remove(&g->cells[entry->cell_idx[i]], oid);
+    entry->count = 0;
+}
+
+/* --- API pública do Spatial Grid ------------------------------------------ */
+
+void engine_sgrid_init(Engine *e, int cell_size)
+{
+    SpatialGrid *g = &e->sgrid;
+    memset(g, 0, sizeof(SpatialGrid));
+    g->cell_size = (cell_size > 0) ? cell_size : ENGINE_SGRID_CELL_SIZE;
+    g->cols      = ENGINE_SGRID_COLS;
+    g->rows      = ENGINE_SGRID_ROWS;
+    g->enabled   = 1;
+    g->dirty     = 0;
+}
+
+void engine_sgrid_destroy(Engine *e)
+{
+    memset(&e->sgrid, 0, sizeof(SpatialGrid));
+    /* enabled permanece 0 após memset */
+}
+
+void engine_sgrid_rebuild(Engine *e)
+{
+    SpatialGrid *g = &e->sgrid;
+    if (!g->enabled) return;
+
+    /* Zera todas as células e entradas de objetos */
+    for (int i = 0; i < ENGINE_SGRID_TOTAL_CELLS; ++i)
+        g->cells[i].count = 0;
+    for (int i = 0; i < ENGINE_MAX_OBJECTS; ++i)
+        g->obj_cells[i].count = 0;
+
+    /* Reinsere todos os objetos ativos */
+    for (int i = 0; i < e->object_count; ++i) {
+        if (e->objects[i].active)
+            _sg_insert_object(e, i);
+    }
+    g->dirty = 0;
+}
+
+void engine_sgrid_insert_object(Engine *e, int oid)
+{
+    if (!e->sgrid.enabled || !_oid_valid(e, oid) || !e->objects[oid].active) return;
+    _sg_insert_object(e, oid);
+}
+
+void engine_sgrid_remove_object(Engine *e, int oid)
+{
+    if (!e->sgrid.enabled || !_oid_valid(e, oid)) return;
+    _sg_remove_object(e, oid);
+}
+
+void engine_sgrid_update_object(Engine *e, int oid)
+{
+    if (!e->sgrid.enabled || !_oid_valid(e, oid)) return;
+    _sg_remove_object(e, oid);
+    if (e->objects[oid].active)
+        _sg_insert_object(e, oid);
+}
+
+/*
+ * _sgrid_query_rect_internal() — acumula candidatos numa área retangular.
+ *
+ * Usa um bitmask stack-allocated (seen[]) para deduplicação em O(1):
+ *   seen[oid >> 5] & (1 << (oid & 31))
+ * ENGINE_MAX_OBJECTS = 256 → seen[8] (32 bytes na stack).
+ */
+static int _sgrid_query_rect_internal(Engine *e,
+                                       int x, int y, int w, int h,
+                                       int *out_oids, int cap)
+{
+    SpatialGrid *g = &e->sgrid;
+    const int c0 = _sg_col(g, x);
+    const int c1 = _sg_col(g, x + w - 1);
+    const int r0 = _sg_row(g, y);
+    const int r1 = _sg_row(g, y + h - 1);
+
+    unsigned int seen[(ENGINE_MAX_OBJECTS + 31) / 32] = {};
+    int found = 0;
+
+    for (int r = r0; r <= r1; ++r) {
+        for (int c = c0; c <= c1; ++c) {
+            const SpatialCell *cell = &g->cells[_sg_idx(g, c, r)];
+            for (int k = 0; k < cell->count; ++k) {
+                const int oid = cell->oids[k];
+                if (oid < 0 || oid >= ENGINE_MAX_OBJECTS) continue;
+                const unsigned int mask = 1u << (oid & 31);
+                if (seen[oid >> 5] & mask) continue;   /* já visto */
+                seen[oid >> 5] |= mask;
+                if (found < cap) out_oids[found++] = oid;
+            }
+        }
+    }
+    return found;
+}
+
+int engine_sgrid_query_rect(Engine *e, int x, int y, int w, int h,
+                             int *out_oids, int cap)
+{
+    if (!e->sgrid.enabled || cap <= 0) return 0;
+    return _sgrid_query_rect_internal(e, x, y, w, h, out_oids, cap);
+}
+
+int engine_sgrid_query_object(Engine *e, int oid, int *out_oids, int cap)
+{
+    if (!e->sgrid.enabled || !_oid_valid(e, oid) || cap <= 0) return 0;
+    int hx, hy, hw, hh;
+    _get_hitbox(e, oid, &hx, &hy, &hw, &hh);
+    return _sgrid_query_rect_internal(e, hx, hy, hw, hh, out_oids, cap);
+}
+
+int engine_sgrid_query_point(Engine *e, int px, int py,
+                              int *out_oids, int cap)
+{
+    if (!e->sgrid.enabled || cap <= 0) return 0;
+    return _sgrid_query_rect_internal(e, px, py, 1, 1, out_oids, cap);
+}
+
+int engine_sgrid_first_collision(Engine *e, int oid)
+{
+    if (!_oid_valid(e, oid) || !e->objects[oid].active) return -1;
+
+    int hx, hy, hw, hh;
+    _get_hitbox(e, oid, &hx, &hy, &hw, &hh);
+
+    if (e->sgrid.enabled) {
+        /* Caminho rápido: consulta o grid */
+        int candidates[ENGINE_SGRID_BUCKET_CAP * ENGINE_SGRID_OBJ_MAX_CELLS];
+        const int n = _sgrid_query_rect_internal(e, hx, hy, hw, hh,
+                                                   candidates,
+                                                   (int)(sizeof(candidates)/sizeof(candidates[0])));
+        for (int i = 0; i < n; ++i) {
+            const int other = candidates[i];
+            if (other == oid || !e->objects[other].active) continue;
+            int bx, by, bw, bh;
+            _get_hitbox(e, other, &bx, &by, &bw, &bh);
+            if (_aabb(hx, hy, hw, hh, bx, by, bw, bh)) return other;
+        }
+        return -1;
+    }
+
+    /* Fallback bruto quando o grid está desativado */
+    for (int i = 0; i < e->object_count; ++i) {
+        if (i == oid || !e->objects[i].active) continue;
+        int bx, by, bw, bh;
+        _get_hitbox(e, i, &bx, &by, &bw, &bh);
+        if (_aabb(hx, hy, hw, hh, bx, by, bw, bh)) return i;
+    }
+    return -1;
+}
+
+int engine_sgrid_all_collisions(Engine *e, int oid, int *out_oids, int cap)
+{
+    if (!_oid_valid(e, oid) || !e->objects[oid].active || cap <= 0) return 0;
+
+    int hx, hy, hw, hh;
+    _get_hitbox(e, oid, &hx, &hy, &hw, &hh);
+    int found = 0;
+
+    if (e->sgrid.enabled) {
+        int candidates[ENGINE_SGRID_BUCKET_CAP * ENGINE_SGRID_OBJ_MAX_CELLS];
+        const int n = _sgrid_query_rect_internal(e, hx, hy, hw, hh,
+                                                   candidates,
+                                                   (int)(sizeof(candidates)/sizeof(candidates[0])));
+        for (int i = 0; i < n && found < cap; ++i) {
+            const int other = candidates[i];
+            if (other == oid || !e->objects[other].active) continue;
+            int bx, by, bw, bh;
+            _get_hitbox(e, other, &bx, &by, &bw, &bh);
+            if (_aabb(hx, hy, hw, hh, bx, by, bw, bh))
+                out_oids[found++] = other;
+        }
+        return found;
+    }
+
+    /* Fallback bruto */
+    for (int i = 0; i < e->object_count && found < cap; ++i) {
+        if (i == oid || !e->objects[i].active) continue;
+        int bx, by, bw, bh;
+        _get_hitbox(e, i, &bx, &by, &bw, &bh);
+        if (_aabb(hx, hy, hw, hh, bx, by, bw, bh))
+            out_oids[found++] = i;
+    }
+    return found;
 }
 
 /* --- Partículas ------------------------------------------------------------ */
@@ -2315,4 +3040,61 @@ int engine_audio_done(Engine *e, AudioHandle h)
     return done;
 }
 
+/* --- FBOs ------------------------------------------------------------------ */
+
+FboHandle engine_fbo_create(Engine *e, int w, int h)
+{
+    return RENDERER(e)->fbo_create(e, w, h);
+}
+void engine_fbo_destroy(Engine *e, FboHandle fh)
+{
+    RENDERER(e)->fbo_destroy(e, fh);
+}
+void engine_fbo_bind(Engine *e, FboHandle fh)
+{
+    RENDERER(e)->fbo_bind(e, fh);
+}
+void engine_fbo_unbind(Engine *e)
+{
+    RENDERER(e)->fbo_unbind(e);
+}
+unsigned int engine_fbo_texture(Engine *e, FboHandle fh)
+{
+    return RENDERER(e)->fbo_texture(e, fh);
+}
+
+/* --- Shaders --------------------------------------------------------------- */
+
+ShaderHandle engine_shader_create(Engine *e, const char *vert_src, const char *frag_src)
+{
+    return RENDERER(e)->shader_create(e, vert_src, frag_src);
+}
+void engine_shader_destroy(Engine *e, ShaderHandle sh)
+{
+    RENDERER(e)->shader_destroy(e, sh);
+}
+void engine_shader_use(Engine *e, ShaderHandle sh)
+{
+    RENDERER(e)->shader_use(e, sh);
+}
+void engine_shader_none(Engine *e)
+{
+    RENDERER(e)->shader_none(e);
+}
+void engine_shader_set_int(Engine *e, ShaderHandle sh, const char *name, int v)
+{
+    RENDERER(e)->shader_set_int(e, sh, name, v);
+}
+void engine_shader_set_float(Engine *e, ShaderHandle sh, const char *name, float v)
+{
+    RENDERER(e)->shader_set_float(e, sh, name, v);
+}
+void engine_shader_set_vec2(Engine *e, ShaderHandle sh, const char *name, float x, float y)
+{
+    RENDERER(e)->shader_set_vec2(e, sh, name, x, y);
+}
+void engine_shader_set_vec4(Engine *e, ShaderHandle sh, const char *name, float x, float y, float z, float w)
+{
+    RENDERER(e)->shader_set_vec4(e, sh, name, x, y, z, w);
+}
 }
