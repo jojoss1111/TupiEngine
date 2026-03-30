@@ -9,7 +9,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 #
 # Passe -DBACKEND=<valor> ao invocar cmake:
 #   cmake -DBACKEND=GL  ..   → OpenGL 2.1 + X11   (padrão em Linux)
-#   cmake -DBACKEND=VK  ..   → Vulkan
 #   cmake -DBACKEND=DX11 ..  → Direct3D 11         (somente Windows)
 #
 # Se BACKEND não for definido, GL é usado em Linux e DX11 em Windows.
@@ -45,33 +44,6 @@ if(BACKEND_UPPER STREQUAL "GL")
         ${X11_LIBRARIES}
         PNG::PNG
         Threads::Threads
-    )
-
-# =============================================================================
-# Backend: Vulkan
-# =============================================================================
-elseif(BACKEND_UPPER STREQUAL "VK")
-    add_compile_definitions(ENGINE_BACKEND_VK)
-    list(APPEND ENGINE_SRCS RendererVK.cpp)
-
-    find_package(Vulkan REQUIRED)
-    find_package(PNG    REQUIRED)
-
-    if(UNIX AND NOT APPLE)
-        # Superfície XCB em Linux
-        find_library(XCB_LIB     xcb         REQUIRED)
-        find_library(XCB_KEYSYMS xcb-keysyms REQUIRED)
-        set(PLATFORM_LIBS ${XCB_LIB} ${XCB_KEYSYMS} dl)
-    elseif(WIN32)
-        add_compile_definitions(VK_USE_PLATFORM_WIN32_KHR)
-        set(PLATFORM_LIBS "")
-    endif()
-
-    set(ENGINE_LIBS
-        Vulkan::Vulkan
-        PNG::PNG
-        Threads::Threads
-        ${PLATFORM_LIBS}
     )
 
 # =============================================================================

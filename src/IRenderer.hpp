@@ -1,7 +1,7 @@
 /*
  * IRenderer.hpp — Interface abstrata de backend gráfico.
  *
- * Todo backend (OpenGL, Direct3D 11, Vulkan) implementa esta classe pura.
+ * Todo backend (OpenGL, Direct3D 11) implementa esta classe pura.
  * A Engine mantém um ponteiro void* (renderer_impl) que é convertido para
  * IRenderer* internamente via static_cast; o código do jogo e o FFI Lua
  * nunca interagem com esta interface diretamente.

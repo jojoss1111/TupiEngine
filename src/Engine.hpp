@@ -12,8 +12,7 @@
  * Seleção de backend em tempo de compilação:
  *   ENGINE_BACKEND_GL   → OpenGL 2.1 + X11    (padrão; define os headers X11/GLX)
  *   ENGINE_BACKEND_DX11 → Direct3D 11          (Windows)
- *   ENGINE_BACKEND_VK   → Vulkan               (Linux/Windows via XCB ou Win32)
- *
+
  * Se nenhuma flag for definida, ENGINE_BACKEND_GL é assumido automaticamente.
  */
 
