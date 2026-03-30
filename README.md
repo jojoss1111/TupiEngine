@@ -1,100 +1,64 @@
-TupiEngine
+# 🏹 TupiEngine
 
-Uma engine 2D purista, veloz e minimalista para jogos estilo 16-bits.
+<p align="center">
+  <img src="https://img.shields.io/badge/Backend-C%2B%2B%2017-blue?style=for-the-badge&logo=c%2B%2B" alt="C++17">
+  <img src="https://img.shields.io/badge/Scripting-LuaJIT-red?style=for-the-badge&logo=lua" alt="LuaJIT">
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20Windows-lightgrey?style=for-the-badge&logo=linux" alt="Plataformas">
+  <img src="https://img.shields.io/badge/Focus-High%20Performance-orange?style=for-the-badge" alt="Performance">
+</p>
 
-A TupiEngine nasceu de uma paixão doentia por programação de baixo nível, movida a hiperfoco e muita vontade de criar algo do zero. Escrita inteiramente em C/C++ "raiz" e controlada via LuaJIT FFI, ela é uma engine brasileira pensada para duas coisas: ajudar quem está começando a dar os primeiros passos sem se frustrar, e dar aos veteranos o controle absoluto do hardware sem o peso das engines comerciais gigantescas.
+---
 
-Se você quer fazer um jogo com estética retro (SNES, GBC) com uma performance absurda, você está no lugar certo.
-🧠 Como a TupiEngine Funciona?
+### **"Engine 100% feita por um desenvolvedor com hiperfoco para ajudar novos programadores em Lua e C."**
 
-A mágica da TupiEngine está na sua arquitetura dividida em duas camadas:
+A **TupiEngine** é uma engine 2D minimalista e ultra-veloz, projetada para quem quer criar jogos com estética retro (16-bits) sem lidar com o peso de engines comerciais. Ela une o poder bruto do **C++** com a agilidade do **LuaJIT**, permitindo que você escreva código simples que roda na velocidade da luz.
 
-    O Coração de C/C++ (O Motor): Toda a lógica pesada, renderização em lote (batching), física de colisão (AABB), gerenciamento de memória e processamento de áudio (via Miniaudio) são feitos em C++. Os dados são orientados a arrays fixos (Data-Oriented Design), garantindo que tudo caiba na cache do processador.
+---
 
-    O Cérebro de LuaJIT (O Volante): A interface do usuário é 100% Lua. Mas não é um binding lento. Usamos o LuaJIT FFI, o que significa que o código Lua compila para código de máquina em tempo de execução e acessa as estruturas em C diretamente na memória ram, com custo de chamada (overhead) praticamente zero.
+## 🚀 Por que usar a TupiEngine?
 
-🟢 Para Programadores Iniciantes
+### 🐥 Para Iniciantes (O caminho fácil)
+* **Lua Puro:** Escreva a lógica do seu jogo em Lua, uma das linguagens mais fáceis do mundo.
+* **Sem Compilação:** Altere o seu script e veja o resultado na hora. Nada de esperar minutos para ver um quadrado se mexer.
+* **Abstração:** Você não precisa saber o que é um "Buffer de Vértices" ou "Swap Chain". A engine cuida disso, você cuida da diversão.
 
-Aprender a programar jogos pode ser assustador quando você tem que lidar com ponteiros, vazamento de memória e compilações de 30 minutos. Com a TupiEngine:
+### 🦾 Para Veteranos (O controle total)
+* **Arquitetura Híbrida:** O núcleo em C++ gerencia o hardware via **X11/OpenGL** (Linux) ou **DirectX 11** (Windows).
+* **Zero Overhead:** Usamos **LuaJIT FFI** para chamar funções C diretamente, garantindo que o scripting não seja um gargalo.
+* **Foco em Dados:** Estruturas POD (Plain Old Data) e gerenciamento de memória manual para performance máxima em hardware modesto.
 
-    Você programa em Lua: Uma linguagem simples, amigável e perdoadora.
+---
 
-    Sem dor de cabeça: A engine já gerencia a janela, os gráficos, o input e o áudio. Você só foca em fazer o seu jogo.
+## 🛠️ Arquitetura do Sistema
 
-    Feedback Instantâneo: Como o jogo roda via script Lua, você não precisa recompilar código C++ toda vez que mudar a cor de um sprite. É só salvar o arquivo e rodar.
+| Componente | Tecnologia | Descrição |
+| :--- | :--- | :--- |
+| **Core** | C++ 17 | Gerenciamento de janelas, inputs e ciclo de vida. |
+| **Graphics** | OpenGL / DX11 | Renderizador de Batch (lotes) para milhares de sprites. |
+| **Audio** | Miniaudio | Suporte a MP3, WAV e FLAC com baixa latência. |
+| **Scripting** | LuaJIT | Interface de alto nível para desenvolvimento rápido. |
 
-🔴 Para Programadores Experientes
+---
 
-Você já sabe programar e está cansado da lentidão e das caixas pretas das engines modernas?
+## 🎮 Código em Ação (Lua)
 
-    Performance Absurda: Renderizador em batch escrito à mão. Suporta até 4096 quads por draw call.
+Esqueça códigos complexos. Na TupiEngine, um loop de jogo profissional parece com isso:
 
-    Baixo Nível: Usa OpenGL (via X11) nativo no Linux para tirar o máximo da máquina (ótimo para quem roda sistemas enxutos via terminal) e DirectX 11 direto no Windows.
+```lua
+local Tupi = require("engine")
+local jogo = Tupi.nova(320, 180, "Tupi Quest", 3) -- Resolução retro com upscale
 
-    Memória Previsível: Sem alocações dinâmicas malucas durante o gameplay. Os limites são definidos por macros C-style (ENGINE_MAX_OBJECTS 256, ENGINE_MAX_PARTICLES 512), garantindo zero garbage collection na engine base.
-
-🚀 Features Principais
-
-    Renderização: Batching dinâmico, suporte a Tilemaps otimizados, fade de tela, suporte a texturas RGBA, e blending invertido.
-
-    Sistemas Prontos: Emissores de partículas embutidos, animadores de sprite configuráveis e sistema de câmera com suporte a tracking suave (lerp) e screen shake.
-
-    Física: Colisão AABB rápida e matemática vetorial embutida.
-
-    Áudio: Mixagem de som de alta performance usando a biblioteca Miniaudio.
-
-    Cross-Platform: Compila liso tanto no Linux (OpenGL 2.1 + X11) quanto no Windows (DX11).
-
-🎮 Exemplo Mínimo: Como é fácil?
-
-Com poucas linhas de Lua, você já tem uma janela e um objeto desenhado na tela:
-Lua
-
-local E = require("engine")
-
--- Cria uma janela de 800x600, chamada "Meu Jogo"
-local jogo = E.nova(800, 600, "Meu Jogo", 1)
-
--- Inicializa o áudio e a cor de fundo (Azul escuro)
-jogo:audio_init()
-jogo:fundo(10, 10, 40)
-
--- Loop principal
 while jogo:rodando() do
     jogo:eventos()
-    jogo:atualizar(0) -- 0 para usar o delta time automático
     
+    -- Lógica simples de cor de fundo
     jogo:limpar()
+    jogo:fundo(20, 20, 25) 
     
-    -- Desenha um retângulo vermelho e um círculo no meio da tela
-    jogo:ret(350, 250, 100, 100, 255, 0, 0)
-    jogo:circulo(400, 300, 20, 0, 255, 0, true)
+    -- Desenhar um player (x, y, largura, altura, R, G, B)
+    jogo:ret(150, 80, 16, 16, 255, 200, 0)
     
     jogo:desenhar()
     jogo:apresentar()
-    
-    jogo:fps(60) -- Crava em 60 frames por segundo
+    jogo:fps(60)
 end
-
-jogo:destruir()
-
-🛠️ Como Compilar a Engine (Source)
-
-Se você quiser modificar o coração em C++ da engine, usamos CMake. A compilação é limpa e sem dependências bizarras.
-
-No Linux (X11 / OpenGL):
-Você precisará do CMake, GCC/Clang, e das bibliotecas de desenvolvimento do X11 e libpng.
-Bash
-
-mkdir build && cd build
-cmake -DBACKEND=GL ..
-make
-
-No Windows (DirectX 11):
-DOS
-
-mkdir build && cd build
-cmake -DBACKEND=DX11 ..
-cmake --build .
-
-Nota: Para rodar os jogos, basta garantir que o libengine.so (ou .dll) esteja na mesma pasta que seus scripts Lua e o LuaJIT instalado.
