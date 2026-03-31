@@ -353,63 +353,248 @@ jogo:remover_emissor(fagulhas)
 
 ## Animação
 
-Animações percorrem frames de uma spritesheet automaticamente.
+Animações percorrem frames de uma spritesheet automaticamente. A engine cuida do tempo e da troca de tile — você só diz quando tocar e quando parar.
+
+### Como funciona uma spritesheet
+
+Uma spritesheet é uma imagem com vários frames organizados em uma grade. Cada frame é identificado por **coluna** e **linha** (ambas começam em 0).
+
+```
+Spritesheet de exemplo (heroi_sheet.png) — tiles de 16x16:
+
+       col 0     col 1     col 2     col 3     col 4     col 5
+linha 0 [ parado ] [correr1] [correr2] [correr3] [correr4] [ ---  ]
+linha 1 [ataque1] [ataque2] [ataque3] [  ---   ] [  ---   ] [ ---  ]
+linha 2 [  dano ] [morrer1] [morrer2] [morrer3] [  ---   ] [ ---  ]
+```
+
+### Criar uma animação
 
 ```lua
--- Spritesheet com 4 frames de corrida na linha 0
-local sid_sheet = jogo:carregar_sprite("heroi_sheet.png")
-local heroi     = jogo:criar_objeto_tile(100, 100, sid_sheet, 0, 0, 32, 32)
-
--- Criar animação
--- parâmetros: sprite_id, largura_tile, altura_tile, colunas, linhas, fps, loop, object_id
+-- parâmetros: sprite_id, tw, th, colunas, linhas, fps, loop, object_id
 local anim_correr = jogo:criar_animacao(
-    sid_sheet,       -- spritesheet
-    32, 32,          -- tamanho de cada tile
-    {0, 1, 2, 3},    -- colunas dos frames (4 frames)
-    {0},             -- linha (todos na linha 0)
-    8,               -- 8 frames por segundo
-    true,            -- loop
-    heroi            -- objeto que será animado
+    sid_sheet,      -- spritesheet carregada com carregar_sprite
+    16, 16,         -- tamanho de cada tile em pixels
+    {1, 2, 3, 4},   -- colunas dos frames, em ordem
+    {0},            -- linha onde estão os frames (só uma = usa em todos)
+    8,              -- velocidade: 8 frames por segundo
+    true,           -- loop: true = repete, false = toca uma vez
+    heroi           -- objeto que terá o tile trocado automaticamente
 )
+```
 
--- Animação de ataque (one-shot, sem loop)
-local anim_atacar = jogo:criar_animacao(
-    sid_sheet, 32, 32,
-    {4, 5, 6},   -- frames do ataque
-    {1},         -- na linha 1
-    12,          -- mais rápido
-    false,       -- sem loop (toca uma vez)
-    heroi
-)
+> **`criar_animacao` não toca a animação automaticamente.** Ela apenas define como a animação funciona. Para iniciar, use `anim_tocar`.
 
--- No loop do jogo:
-if jogo:tecla("a") or jogo:tecla("d") then
-    jogo:anim_tocar(anim_correr)
+---
+
+### Cenário 1 — Movimento com animação (o mais comum)
+
+Personagem que anima ao se mover e para no frame inicial quando parado.
+
+```lua
+local E    = require("engine")
+local jogo = E.nova(256, 224, "Herói", 2)
+jogo:fundo(30, 30, 40)
+
+local sheet  = jogo:carregar_sprite("heroi_sheet.png")
+local heroi  = jogo:criar_objeto_tile(120, 100, sheet, 0, 0, 16, 16)
+jogo:hitbox(heroi, 2, 0, 12, 16)
+
+-- Animação de corrida: 4 frames na linha 0, colunas 1 a 4
+local anim_correr = jogo:criar_animacao(sheet, 16, 16, {1,2,3,4}, {0}, 8, true, heroi)
+
+local vel = 80  -- pixels por segundo
+
+while jogo:rodando() do
+    jogo:eventos()
+    jogo:atualizar()
+    jogo:limpar()
+
+    local dt      = jogo:delta()
+    local movendo = false
+
+    if jogo:tecla("d") then
+        jogo:mover(heroi, vel * dt, 0)
+        jogo:espelhar(heroi, false, false)  -- olha para a direita
+        movendo = true
+    elseif jogo:tecla("a") then
+        jogo:mover(heroi, -vel * dt, 0)
+        jogo:espelhar(heroi, true, false)   -- espelha para olhar à esquerda
+        movendo = true
+    end
+
+    if movendo then
+        jogo:anim_tocar(anim_correr)        -- só inicia se não estiver tocando
+    else
+        jogo:anim_parar(anim_correr, 0, 0)  -- para no frame parado (col 0, lin 0)
+    end
+
+    jogo:desenhar()
+    jogo:apresentar()
+    jogo:fps(60)
 end
 
+jogo:destruir()
+```
+
+> **Regra importante:** `anim_tocar` chamado dentro do `if movendo` não reinicia a animação se ela já estiver tocando — ela continua de onde estava. Isso é o comportamento correto.
+
+---
+
+### Cenário 2 — Múltiplas animações (correr, atacar, morrer)
+
+Personagem com animações diferentes para cada estado.
+
+```lua
+local sheet = jogo:carregar_sprite("heroi_sheet.png")
+local heroi = jogo:criar_objeto_tile(120, 100, sheet, 0, 0, 16, 16)
+
+-- Cada animação aponta para um conjunto diferente de frames
+local anim_correr = jogo:criar_animacao(sheet, 16, 16, {1,2,3,4}, {0}, 8,  true,  heroi)
+local anim_atacar = jogo:criar_animacao(sheet, 16, 16, {0,1,2},   {1}, 12, false, heroi)
+local anim_morrer = jogo:criar_animacao(sheet, 16, 16, {0,1,2,3}, {2}, 6,  false, heroi)
+
+local vivo    = true
+local atacando = false
+local vel     = 80
+
+while jogo:rodando() do
+    jogo:eventos()
+    jogo:atualizar()
+    jogo:limpar()
+
+    local dt = jogo:delta()
+
+    if vivo then
+        -- Atacar tem prioridade: dispara com tecla_press para não repetir
+        if jogo:tecla_press("j") then
+            atacando = true
+            jogo:anim_tocar(anim_atacar)
+        end
+
+        -- Enquanto o ataque estiver rodando, bloqueia o movimento
+        if atacando then
+            if jogo:anim_fim(anim_atacar) then
+                atacando = false  -- ataque terminou, libera o movimento
+            end
+        else
+            -- Movimento normal quando não está atacando
+            local movendo = false
+            if jogo:tecla("d") then jogo:mover(heroi,  vel*dt, 0); movendo=true end
+            if jogo:tecla("a") then jogo:mover(heroi, -vel*dt, 0); movendo=true end
+
+            if movendo then
+                jogo:anim_tocar(anim_correr)
+            else
+                jogo:anim_parar(anim_correr, 0, 0)
+            end
+        end
+
+        -- Morrer ao pressionar K (exemplo)
+        if jogo:tecla_press("k") then
+            vivo = false
+            jogo:anim_tocar(anim_morrer)
+        end
+    end
+    -- Quando vivo=false, nenhuma animação nova é iniciada
+    -- anim_morrer toca até o fim e fica no último frame
+
+    jogo:desenhar()
+    jogo:apresentar()
+    jogo:fps(60)
+end
+
+jogo:destruir()
+```
+
+---
+
+### Cenário 3 — Animação one-shot com retorno automático
+
+Animação que toca uma vez e volta para outra automaticamente ao terminar.
+
+```lua
+-- anim_atacar: loop=false → toca uma vez e para
+local anim_correr = jogo:criar_animacao(sheet, 16, 16, {1,2,3,4}, {0}, 8,  true,  heroi)
+local anim_atacar = jogo:criar_animacao(sheet, 16, 16, {0,1,2},   {1}, 12, false, heroi)
+
+-- No loop:
 if jogo:tecla_press("j") then
     jogo:anim_tocar(anim_atacar)
 end
 
--- Verificar se animação one-shot terminou
+-- Quando o ataque terminar, volta a correr automaticamente
 if jogo:anim_fim(anim_atacar) then
-    jogo:anim_tocar(anim_correr)  -- volta a correr
+    jogo:anim_tocar(anim_correr)
 end
-
--- Parar e exibir frame fixo
-jogo:anim_parar(anim_correr, 0, 0)  -- para no frame (col 0, linha 0)
-
--- Liberar quando não precisar mais
-jogo:anim_destruir(anim_correr)
 ```
+
+---
+
+### Cenário 4 — Animação sem objeto (controle manual do tile)
+
+Às vezes você quer controlar qual tile é exibido sem usar `criar_animacao`. Útil para UI, efeitos especiais ou quando um único objeto precisa de animações muito diferentes.
+
+```lua
+-- Sem passar object_id, a animação não muda nenhum objeto automaticamente.
+-- Você consulta o frame atual e aplica manualmente onde quiser.
+local anim_chama = jogo:criar_animacao(sheet, 16, 16, {0,1,2,3,4}, {3}, 10, true, nil)
+
+-- No loop:
+jogo:anim_tocar(anim_chama)  -- inicia uma vez, fora do loop ou com flag
+
+-- Para ler o frame atual e aplicar em vários objetos:
+local col_atual = anim_chama.frames[anim_chama.idx][1]
+local lin_atual = anim_chama.frames[anim_chama.idx][2]
+
+-- Aplicar o mesmo frame em múltiplos objetos (ex: tochas no cenário)
+for _, tocha in ipairs(tochas) do
+    jogo:objeto_tile(tocha, col_atual, lin_atual)
+end
+```
+
+---
+
+### Cenário 5 — Frames em linhas diferentes
+
+Quando os frames de uma animação estão espalhados em linhas distintas da spritesheet.
+
+```lua
+-- Cada entrada em `colunas` corresponde à entrada na mesma posição de `linhas`
+-- Frame 1: col 3, lin 0
+-- Frame 2: col 4, lin 0
+-- Frame 3: col 0, lin 2
+-- Frame 4: col 1, lin 2
+local anim_especial = jogo:criar_animacao(
+    sheet, 16, 16,
+    {3, 4, 0, 1},   -- colunas de cada frame
+    {0, 0, 2, 2},   -- linha correspondente a cada frame
+    6, true, heroi
+)
+```
+
+> Quando `linhas` tem **um único valor** (`{0}`), essa linha é usada para todos os frames. Quando tem o mesmo número de entradas que `colunas`, cada frame usa a sua linha.
+
+---
+
+### Referência das funções
 
 | Função | Parâmetros | Retorno |
 |---|---|---|
-| `jogo:criar_animacao(sid, tw, th, cols, lins, fps, loop, oid)` | Ver exemplo | handle de animação |
-| `jogo:anim_tocar(anim)` | Handle | — |
-| `jogo:anim_parar(anim, col, lin)` | Handle, frame opcional | — |
-| `jogo:anim_fim(anim)` | Handle | `true` ou `false` |
+| `jogo:criar_animacao(sid, tw, th, cols, lins, fps, loop, oid)` | Ver exemplos acima | handle de animação |
+| `jogo:anim_tocar(anim)` | Handle — não reinicia se já estiver tocando | — |
+| `jogo:anim_parar(anim, col, lin)` | Handle, frame fixo opcional | — |
+| `jogo:anim_fim(anim)` | Handle | `true` quando one-shot terminou |
 | `jogo:anim_destruir(anim)` | Handle | — |
+
+### Erros comuns
+
+| Erro | Causa | Solução |
+|---|---|---|
+| Sprite trava no frame 1 | `anim_tocar` chamado todo frame | Já corrigido na engine — `anim_tocar` ignora se já estiver ativo |
+| Animação para imediatamente | `anim_parar` fora do `if movendo` | Coloque `anim_parar` dentro do `else` |
+| Ataque não toca até o fim | `anim_tocar(anim_correr)` sobrescreve | Use uma flag `atacando` para bloquear outras animações |
+| Frames errados | Colunas/linhas trocadas | Lembre: coluna = eixo X, linha = eixo Y da spritesheet |
 
 ---
 
