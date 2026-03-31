@@ -57,22 +57,47 @@ A **TupiEngine** é uma engine 2D minimalista e ultra-veloz, projetada para quem
 Esqueça códigos complexos. Na TupiEngine, um loop de jogo profissional parece com isso:
 
 ```lua
-local Tupi = require("engine")
-local jogo = Tupi.nova(320, 180, "Tupi Quest", 3) -- Resolução retro com upscale
+-- main.lua
+package.path = package.path .. ";./?.lua;./src/?.lua;./obj/?.lua"
 
-while jogo:rodando() do
-    jogo:eventos()
-    
-    -- Lógica simples de cor de fundo
-    jogo:limpar()
-    jogo:fundo(20, 20, 25) 
-    
-    -- Desenhar um player (x, y, largura, altura, R, G, B)
-    jogo:ret(150, 80, 16, 16, 255, 200, 0)
-    jogo:desenhar()
-    jogo:apresentar()
-    jogo:fps(60)
+local E = require("engine")
+local SCREEN_W = 256
+local SCREEN_H = 244
+
+local function main()
+    local v = E.nova(SCREEN_W, SCREEN_H, "", 2)
+    if not v then
+        print("Erro ao inicializar a Engine!")
+        return
+    end
+    v:fundo(0, 0, 0)
+    local x = SCREEN_W/2
+    local y = SCREEN_H/2
+    local velocidade = 4
+    local tamanho_q = 16
+    while v:rodando() do
+        -- 1. Eventos e limpeza
+        v:eventos()
+        v:limpar()
+        v:atualizar(0)
+        if v:tecla("w") then
+            x = x - velocidade
+        elseif v:tecla("s") then
+            x = x + velocidade
+        elseif v:tecla("d") then
+            y = y + velocidade
+        elseif v:tecla("a") then
+            y = y - velocidade
+        end
+        v:rect(x, y, tamanho_q, tamanho_q, 200, 10, 50)
+        v:apresentar()
+        v:fps(60)
+    end
+
+    v:destruir()
 end
+
+main()
 ```
 ## 🛠️ Como Compilar e Rodar
 
