@@ -27,7 +27,8 @@
 18. [FBO (Framebuffer)](#fbo-framebuffer)
 19. [FOV — Campo de Visão](#fov--campo-de-visão)
 20. [Grade Espacial](#grade-espacial)
-21. [Exemplo completo](#exemplo-completo)
+21. [Sistema de Mapas](#sistema-de-mapas)
+22. [Exemplo completo](#exemplo-completo)
 
 ---
 
@@ -306,7 +307,6 @@ if jogo:colide_ponto(botao, mx, my) then
     print("Mouse em cima do botão!")
 end
 ```
-
 > **Dica de performance:** As funções acima checam um par de objetos por vez. Se você tem dezenas ou centenas de inimigos e projéteis ao mesmo tempo, use a [Grade Espacial](#grade-espacial) — ela é muito mais rápida para muitos objetos.
 
 | Função | Parâmetros | Retorno |
@@ -1096,6 +1096,303 @@ jogo:sgrid_destruir()
 | `jogo:sgrid_todas_colisoes(oid, max)` | object_id, limite máximo | tabela com IDs |
 | `jogo:sgrid_ativo()` | — | `true` ou `false` |
 | `jogo:sgrid_destruir()` | — | — |
+
+---
+
+## Sistema de Mapas
+
+O sistema de mapas é composto por quatro arquivos que trabalham juntos. O C++ faz toda a renderização e lógica — o Lua apenas descreve o visual e o comportamento de cada bloco.
+
+| Arquivo | Função |
+|---|---|
+| `mapa.hpp` | Structs, flags e API pública |
+| `mapa.cpp` | Renderização, carregamento JSON/Lua, colisão, triggers |
+| `mapa.lua` | Módulo Lua para descrever mapas com funções fluentes |
+| `main.lua` | Importa `mapa.lua`, define sprites, colisores e lógica de triggers |
+
+> **Separação de responsabilidades:** O Lua define *o que* aparece e *o que* acontece. O C++ define *como* renderizar e *como* calcular colisões. Você nunca chama funções de desenho no Lua.
+
+### Flags de bloco
+
+Cada tile pode ter um ou mais comportamentos definidos por flags:
+
+| Flag | String no Lua | O que faz |
+|---|---|---|
+| `MAPA_FLAG_COLISOR` | `"colisor"` | Bloqueia o movimento do jogador (AABB sólido) |
+| `MAPA_FLAG_TRIGGER` | `"trigger"` | Dispara evento de proximidade |
+| `MAPA_FLAG_AGUA` | `"agua"` | Tile tratado como água |
+| `MAPA_FLAG_ESCADA` | `"escada"` | Permite subir/descer |
+| `MAPA_FLAG_SOMBRA` | `"sombra"` | Bloqueia o FOV |
+| `MAPA_FLAG_ANIMADO` | `"animado"` | Tile com animação de frames |
+
+### Tipos de objeto (triggers)
+
+| Tipo | String no Lua | Comportamento esperado |
+|---|---|---|
+| `TRIGGER_TIPO_BAU` | `"bau"` | Jogador pressiona `[E]` para coletar item |
+| `TRIGGER_TIPO_NPC` | `"npc"` | Abre diálogo ao pressionar `[E]` |
+| `TRIGGER_TIPO_PORTA` | `"porta"` | Abre/fecha mediante condição |
+| `TRIGGER_TIPO_TELEPORTE` | `"teleporte"` | Troca de mapa automaticamente ao pisar |
+| `TRIGGER_TIPO_SCRIPT` | `"script"` | Executa lógica customizada definida no Lua |
+| `TRIGGER_TIPO_GENERICO` | `"generico"` | Sem comportamento pré-definido |
+
+### Construindo um mapa em Lua
+
+O arquivo `mapa.lua` expõe uma API fluente para montar a estrutura do mapa. O resultado é uma tabela que o C++ carrega via `mapa_carregar_lua()`.
+
+```lua
+local Mapa = require("mapa")
+
+-- Cria um mapa de 25×18 tiles, cada tile com 16×16 pixels
+local m = Mapa.novo(25, 18, 16, 16)
+m:atlas("assets/tileset.png")   -- spritesheet principal
+
+-- ---------------------------------------------------------------
+-- Camadas (z_order menor = desenhado primeiro, fica "atrás")
+-- ---------------------------------------------------------------
+
+-- Camada de chão
+local chao = m:camada("chao", 0)
+chao:fill(0, 0, 24, 17,  0, 0)            -- preenche tudo com tile (col=0, lin=0)
+chao:fill(8, 0, 16, 17,  1, 0)            -- faixa de terra no meio
+
+-- Camada de paredes
+local paredes = m:camada("paredes", 1)
+paredes:borda(25, 18,  3, 1)              -- borda sólida automática ao redor do mapa
+paredes:tile(2, 2,  1, 2, {"colisor"})    -- árvore isolada na posição (2, 2)
+paredes:linha_h(5, 11, 8,  0, 1, {"colisor", "sombra"})  -- parede horizontal
+
+-- Tile animado (água com 3 frames a 6 fps)
+-- Os sprite_ids dos frames são pré-carregados na engine
+chao:tile_animado(20, 14, {sid_agua1, sid_agua2, sid_agua3}, 6)
+
+-- Camada de decoração (não tem colisão)
+local deco = m:camada("decoracao", 2)
+deco:tile(5,  5,  4, 0)   -- flor
+deco:tile(12, 9,  4, 1)   -- cogumelo
+
+-- ---------------------------------------------------------------
+-- Objetos especiais (triggers de proximidade)
+-- ---------------------------------------------------------------
+
+-- Baú com item — ativa quando jogador chega a 1.5 tiles de distância
+m:objeto(1, "bau", 5, 3, 1.5,
+    { item="espada_de_fogo", mensagem="Você encontrou a Espada de Fogo!" },
+    "assets/bau.png")
+
+-- NPC com diálogo
+m:objeto(2, "npc", 12, 5, 2.0,
+    { nome="Velho Sábio", dialogo="Cuidado com as sombras..." },
+    "assets/npc_velho.png")
+
+-- Teleporte automático ao pisar
+m:objeto(3, "teleporte", 24, 8, 1.0,
+    { destino="mapas/masmorra.lua", dest_col="1", dest_lin="8" })
+
+return m:build()   -- retorna a tabela MapData que o C++ vai ler
+```
+
+### Usando constantes de tile prontas
+
+`mapa.lua` já traz uma tabela `Mapa.TILES` com tiles comuns. Ajuste os valores `col/lin` para o seu próprio spritesheet:
+
+```lua
+-- Mapa.TILES traz: GRAMA, TERRA, AREIA, NEVE, PAREDE, PEDRA,
+--                  TIJOLO, AGUA, LAVA, ESCADA_BAIXO, ESCADA_CIMA, PORTA, BAU
+
+-- Usa a constante diretamente:
+local sc, sl, flags = Mapa.tile_de(Mapa.TILES.PAREDE)
+paredes:tile(3, 5,  sc, sl, flags)
+
+-- Adiciona flags extras:
+local sc, sl, flags = Mapa.tile_de(Mapa.TILES.AGUA, {"animado"})
+chao:tile(10, 8,  sc, sl, flags)
+```
+
+### Formatos de arquivo suportados
+
+Você pode descrever o mapa em **Lua** (arquivo `.lua`) ou em **JSON** (arquivo `.json`). O resultado é idêntico — escolha o que for mais cômodo para o seu fluxo de trabalho.
+
+**Lua** — construído com a API de `mapa.lua`:
+```lua
+-- mapas/floresta.lua
+local Mapa = require("mapa")
+local m = Mapa.novo(25, 18, 16, 16)
+-- ... (mesmo código do exemplo acima)
+return m:build()
+```
+
+**JSON** — escrito à mão ou gerado por um editor de mapas:
+```json
+{
+  "largura": 25, "altura": 18,
+  "tile_w": 16,  "tile_h": 16,
+  "sprite_atlas": "assets/tileset.png",
+  "camadas": [
+    {
+      "nome": "chao", "z_order": 0, "visivel": true,
+      "tiles": [
+        { "col": 5, "lin": 3, "sprite_col": 0, "sprite_lin": 2,
+          "flags": ["agua", "animado"], "anim_fps": 6,
+          "anim_frames": [10, 11, 12] }
+      ]
+    }
+  ],
+  "objetos": [
+    { "id": 1, "tipo": "bau", "col": 5, "lin": 3, "raio": 1.5,
+      "sprite": "assets/bau.png",
+      "props": { "item": "espada", "mensagem": "Achei!" } }
+  ]
+}
+```
+
+### Carregando o mapa via FFI no main.lua
+
+Antes de usar as funções do mapa, você precisa declarar os tipos C e carregar a biblioteca:
+
+```lua
+local ffi     = require("engineffi")
+local lib_mapa = ffi.load("./libmapa.so", true)
+
+ffi.cdef[[
+    /* tipos e funções de mapa.hpp */
+    typedef struct { ... } MapaDados;
+    typedef struct { ... } MapaVerificacao;
+    /* ... (veja o main.lua de exemplo para o cdef completo) */
+]]
+
+-- Aloca o mapa e carrega
+local mapa_ptr = ffi.new("MapaDados[1]")
+local mapa     = mapa_ptr[0]
+lib_mapa.mapa_init(mapa)
+
+-- Carrega de arquivo Lua:
+lib_mapa.mapa_carregar_lua(mapa, jogo._e, "mapas/floresta.lua")
+
+-- Ou de arquivo JSON:
+lib_mapa.mapa_carregar_json(mapa, jogo._e, "mapas/floresta.json")
+```
+
+### Loop principal com mapa
+
+```lua
+while jogo:rodando() do
+    jogo:eventos()
+    local dt = jogo:delta()
+
+    -- Movimento com colisão por tile
+    local novo_px = player.px + dx * vel * dt
+    local col_novo = ffi.new("int[1]")
+    local lin_novo = ffi.new("int[1]")
+    lib_mapa.mapa_pixel_para_tile(mapa, math.floor(novo_px), math.floor(player.py),
+                                  col_novo, lin_novo)
+    if lib_mapa.mapa_colisor(mapa, col_novo[0], lin_novo[0]) == 0 then
+        player.px = novo_px   -- só move se não for colisor
+    end
+
+    -- Scroll: o mapa se move, o player fica no centro da tela
+    local ox = LARGURA/2 - math.floor(player.px) - mapa.tile_w/2
+    local oy = ALTURA/2  - math.floor(player.py) - mapa.tile_h/2
+    lib_mapa.mapa_set_offset(mapa, ox, oy)
+
+    -- Verifica triggers de proximidade
+    local v = lib_mapa.mapa_verificar_trigger(mapa,
+        player.px + mapa.tile_w * 0.5,
+        player.py + mapa.tile_h * 0.5)
+
+    if v.resultado == 1 and v.objeto ~= nil then
+        local obj = v.objeto
+        if obj.tipo == 1 and jogo:tecla_press("e") then  -- BAU
+            lib_mapa.mapa_desativar_objeto(mapa, obj.id)
+            -- lê propriedades do objeto:
+            for i = 0, obj.n_props - 1 do
+                local chave = ffi.string(obj.props[i][0])
+                local valor = ffi.string(obj.props[i][1])
+                print(chave, "=", valor)
+            end
+        elseif obj.tipo == 3 and jogo:tecla_press("e") then  -- NPC
+            mostrar_dialogo(obj)
+        elseif obj.tipo == 4 then   -- TELEPORTE (automático ao pisar)
+            trocar_mapa(obj)
+        end
+    end
+
+    jogo:limpar()
+    lib_mapa.mapa_desenhar(mapa, jogo._e)  -- desenha todas as camadas
+    jogo:desenhar()                         -- desenha objetos da engine (player etc.)
+    jogo:apresentar()
+    jogo:fps(60)
+    jogo:atualizar()
+end
+
+lib_mapa.mapa_destruir(mapa)
+```
+
+### Referência — API do mapa
+
+**Ciclo de vida e carregamento**
+
+| Função | Parâmetros | O que faz |
+|---|---|---|
+| `mapa_init(m)` | Ponteiro MapaDados | Inicializa o mapa zerado |
+| `mapa_destruir(m)` | Ponteiro MapaDados | Libera recursos |
+| `mapa_carregar_lua(m, e, caminho)` | Mapa, Engine, arquivo `.lua` | Carrega mapa de arquivo Lua |
+| `mapa_carregar_json(m, e, caminho)` | Mapa, Engine, arquivo `.json` | Carrega mapa de arquivo JSON |
+
+**Renderização**
+
+| Função | Parâmetros | O que faz |
+|---|---|---|
+| `mapa_desenhar(m, e)` | Mapa, Engine | Desenha todas as camadas e objetos |
+| `mapa_desenhar_camada(m, e, idx)` | Mapa, Engine, índice | Desenha só uma camada |
+| `mapa_desenhar_objetos(m, e)` | Mapa, Engine | Desenha objetos com sprite |
+
+**Consulta de tiles**
+
+| Função | Parâmetros | Retorno |
+|---|---|---|
+| `mapa_colisor(m, col, lin)` | Mapa, coluna, linha | `1` se qualquer camada tem colisor |
+| `mapa_flags(m, col, lin)` | Mapa, coluna, linha | OR de todos os flags no tile |
+| `mapa_get_tile(m, camada, col, lin)` | Mapa, índice de camada, coluna, linha | Ponteiro para `MapaTile` |
+
+**Coordenadas**
+
+| Função | Parâmetros | O que faz |
+|---|---|---|
+| `mapa_pixel_para_tile(m, px, py, col, lin)` | Mapa, posição em pixels, saída col/lin | Converte pixel → tile |
+| `mapa_tile_para_pixel(m, col, lin, x, y)` | Mapa, col/lin, saída x/y | Converte tile → pixel |
+| `mapa_set_offset(m, ox, oy)` | Mapa, deslocamento | Define o scroll do mapa |
+| `mapa_centralizar_em(m, e, col, lin)` | Mapa, Engine, tile | Centraliza a câmera em um tile |
+
+**Triggers e objetos**
+
+| Função | Parâmetros | Retorno |
+|---|---|---|
+| `mapa_verificar_trigger(m, px, py)` | Mapa, posição em pixels | `MapaVerificacao` com resultado, objeto e distância |
+| `mapa_get_objeto(m, id)` | Mapa, id do objeto | Ponteiro para `MapaObjeto` ou `NULL` |
+| `mapa_desativar_objeto(m, id)` | Mapa, id | Marca objeto como inativo (coletado/usado) |
+
+**Modificação em tempo de execução**
+
+| Função | Parâmetros | O que faz |
+|---|---|---|
+| `mapa_set_tile(m, camada, col, lin, sid, tc, tl, flags)` | Mapa, camada, posição, sprite_id, tile_col, tile_lin, flags | Troca um tile durante o jogo |
+
+**API Lua (mapa.lua)**
+
+| Função | Parâmetros | O que faz |
+|---|---|---|
+| `Mapa.novo(larg, alt, tw, th)` | Colunas, linhas, largura e altura do tile | Cria mapa vazio |
+| `m:atlas(caminho)` | Arquivo PNG | Define spritesheet principal |
+| `m:camada(nome, z_order)` | String, número | Cria e retorna uma camada |
+| `m:objeto(id, tipo, col, lin, raio, props, sprite)` | Ver exemplo | Registra objeto/trigger |
+| `m:build()` | — | Retorna tabela MapData para o C++ |
+| `c:tile(col, lin, sc, sl, flags, sprite)` | Posição, tile na sheet, flags, sprite opcional | Define um tile |
+| `c:tile_animado(col, lin, frames, fps, flags)` | Posição, lista de sprite_ids, fps | Tile com animação |
+| `c:fill(ci, li, cf, lf, sc, sl, flags)` | Retângulo de tiles, tile na sheet, flags | Preenche área inteira |
+| `c:borda(larg, alt, sc, sl)` | Dimensões do mapa, tile | Cria borda sólida automática |
+| `c:linha_h(ci, cf, lin, sc, sl, flags)` | Coluna ini/fim, linha, tile, flags | Linha horizontal de tiles |
+| `c:linha_v(col, li, lf, sc, sl, flags)` | Coluna, linha ini/fim, tile, flags | Linha vertical de tiles |
 
 ---
 
