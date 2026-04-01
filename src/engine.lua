@@ -31,10 +31,11 @@ function E.nova(largura, altura, titulo, escala)
         return nil
     end
     local self = setmetatable({}, E)
-    self._e       = ptr[0]
-    self._ptr     = ptr
-    self._anims   = {}
-    self._anim_id = 0
+    self._e         = ptr[0]
+    self._ptr       = ptr
+    self._anims     = {}
+    self._anim_id   = 0
+    self._anim_atual = {}   -- [oid] = anim_ativa_atual
     return self
 end
 
@@ -513,30 +514,63 @@ function E:criar_animacao(sid, tw, th, colunas, linhas, fps, loop, oid)
         _id=id, sid=sid, tw=tw, th=th, fps=fps or 8,
         loop=(loop ~= false), oid=oid,
         frames=frames, idx=1, timer=0,
-        ativo=true, fim=false
+        ativo=false, fim=false   -- nasce PARADA; use anim_tocar() para iniciar
     }
     self._anims[id] = anim
-    if oid and #frames > 0 then
-        lib.engine_set_object_tile(self._e, oid, frames[1][1], frames[1][2])
-    end
+    -- NÃO aplica o tile aqui para não sobrescrever outra animação ativa
     return anim
 end
 
--- Toca a animação do início.
+--[[
+    :anim_tocar(anim)
+    Toca a animação. Se ela já for a animação ativa do objeto, não reinicia.
+    Se outra animação estiver ativa no mesmo objeto, ela é pausada primeiro.
+]]
 function E:anim_tocar(anim)
-    anim.idx = 1; anim.timer = 0; anim.fim = false; anim.ativo = true
-    if anim.oid and #anim.frames > 0 then
-        local f = anim.frames[1]
-        lib.engine_set_object_tile(self._e, anim.oid, f[1], f[2])
+    local oid = anim.oid
+    if oid then
+        local atual = self._anim_atual[oid]
+        if atual == anim then
+            -- já é a ativa: apenas garante que está rodando (ex.: estava no fim)
+            if anim.ativo and not anim.fim then return end
+        elseif atual then
+            -- pausa a anterior sem alterar o tile (quem manda no tile agora é anim)
+            atual.ativo = false
+        end
+        self._anim_atual[oid] = anim
+    end
+    -- (re)inicia do frame 1 se estava inativa ou chegou ao fim
+    if not anim.ativo or anim.fim then
+        anim.idx = 1; anim.timer = 0; anim.fim = false
+    end
+    anim.ativo = true
+    if oid and #anim.frames > 0 then
+        local f = anim.frames[anim.idx]
+        lib.engine_set_object_tile(self._e, oid, f[1], f[2])
     end
 end
 
--- Para a animação. Se quiser exibir um frame específico ao parar, passe coluna e linha.
+--[[
+    :anim_parar(anim [, coluna, linha])
+    Para a animação. Se for a ativa do objeto, libera o slot.
+    Opcional: exibe um frame estático (coluna, linha) ao parar.
+]]
 function E:anim_parar(anim, coluna, linha)
-    anim.ativo = false; anim.idx = 1; anim.timer = 0
+    anim.ativo = false; anim.idx = 1; anim.timer = 0; anim.fim = false
+    if anim.oid and self._anim_atual[anim.oid] == anim then
+        self._anim_atual[anim.oid] = nil
+    end
     if coluna ~= nil and anim.oid then
         lib.engine_set_object_tile(self._e, anim.oid, coluna, linha or 0)
     end
+end
+
+--[[
+    :anim_atual(object_id)
+    Retorna a animação que está tocando atualmente no objeto, ou nil.
+]]
+function E:anim_atual(oid)
+    return self._anim_atual[oid]
 end
 
 -- Retorna true quando uma animação sem loop chegou ao último frame.
@@ -544,8 +578,11 @@ function E:anim_fim(anim)
     return anim.fim
 end
 
--- Remove a animação da memória.
+-- Remove a animação da memória e libera o slot ativo se necessário.
 function E:anim_destruir(anim)
+    if anim.oid and self._anim_atual[anim.oid] == anim then
+        self._anim_atual[anim.oid] = nil
+    end
     self._anims[anim._id] = nil
 end
 
@@ -553,22 +590,25 @@ end
 function E:_atualizar_anims(dt)
     if dt > 0.1 then dt = 0.1 end
     for _, a in pairs(self._anims) do
+        -- só avança se for a animação ativa do objeto (ou sem objeto associado)
         if a.ativo and not a.fim and #a.frames > 0 then
-            local dur = 1.0 / a.fps
-            a.timer = a.timer + dt
-            while a.timer >= dur do
-                a.timer = a.timer - dur
-                if a.loop then
-                    a.idx = (a.idx % #a.frames) + 1
-                elseif a.idx < #a.frames then
-                    a.idx = a.idx + 1
-                else
-                    a.fim = true; a.ativo = false; break
+            if not a.oid or self._anim_atual[a.oid] == a then
+                local dur = 1.0 / a.fps
+                a.timer = a.timer + dt
+                while a.timer >= dur do
+                    a.timer = a.timer - dur
+                    if a.loop then
+                        a.idx = (a.idx % #a.frames) + 1
+                    elseif a.idx < #a.frames then
+                        a.idx = a.idx + 1
+                    else
+                        a.fim = true; a.ativo = false; break
+                    end
                 end
-            end
-            if not a.fim and a.oid then
-                local f = a.frames[a.idx]
-                lib.engine_set_object_tile(self._e, a.oid, f[1], f[2])
+                if not a.fim and a.oid then
+                    local f = a.frames[a.idx]
+                    lib.engine_set_object_tile(self._e, a.oid, f[1], f[2])
+                end
             end
         end
     end
