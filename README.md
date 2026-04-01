@@ -139,6 +139,3 @@ TupiEngine/
 ## 🤝 Como Contribuir
 Pode contrubuir apenas me enviando oque você achou, novas coisas que posso colocar, erro que você encontrou 
 e se possivel compartilhar com um amigo ou fazer um jogo e falar que fez na tupiengine
-
-## Links para a documentação completa 
-* [Como funcionam as funções de Sistema](./documentação.md)
