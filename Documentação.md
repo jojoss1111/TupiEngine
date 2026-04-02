@@ -1137,20 +1137,22 @@ m:objeto("Portal",   4, 3, 11, 1.5, "sprites/portal.png", {0,1,2,3,4}, 0, 10, fa
 
 ---
 
-### `m:camada(nome, z_order, visivel?)`
+### `m:camada(id_bloco, layer, z)`
 
-Cria uma camada vazia e a registra no mapa. Normalmente não é necessário criar camadas
-manualmente — `criar_bloco` + `carregar_matriz` gerencia isso automaticamente. Use apenas
-quando precisar de controle fino de z_order ou visibilidade.
+Registra em qual camada de renderização um bloco deve aparecer. Pode ser chamado múltiplas vezes para o mesmo bloco — ele será desenhado em **todas** as camadas registradas.
 
+As camadas são criadas automaticamente; não é necessário declará-las antes.
 ```lua
-local decoracao = m:camada("decoracao", 2)       -- z=2, visível
-local debug_col = m:camada("debug",     9, false) -- invisível por padrão
+local G = m:criar_bloco("Grama",  1, 0, 0, false, true, 0)
+local P = m:criar_bloco("Parede", 2, 1, 1, true,  true, 0)
+m:camada(G, 0)      -- layer 0, z 0 (fundo)
+m:camada(P, 1)      -- layer 1, z 0
+m:camada(P, 1, 2)   -- mesmo bloco também em layer 1, z 2
 ```
 
-`z_order` menor = desenhado primeiro (fundo). `visivel` padrão é `true`.
-
----
+Se `:camada()` não for chamado para um bloco, ele é colocado automaticamente em `layer=0, z=0` quando a matriz for carregada.
+`layer` menor = desenhado primeiro. Dentro da mesma `layer`, `z` menor = desenhado primeiro (fundo). Visibilidade é sempre `true` por padrão e pode ser ajustada pelos dados internos da camada.
+> **Atenção:** o bloco precisa ter sido criado com `:criar_bloco()` antes de chamar `:camada()`, caso contrário um erro será lançado.
 
 ### Flags de bloco
 
