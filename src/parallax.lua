@@ -64,11 +64,12 @@ end
 function Parallax:adicionar_sprite(caminho, cfg)
     local c      = _normalizar_cfg(cfg)
     c.tipo       = "sprite"
-    c.sprite_id  = self._e:carregar_sprite(caminho)
-    if c.sprite_id < 0 then
+    local spr    = self._e:carregar_sprite(caminho)
+    if not spr then
         error("Parallax: não foi possível carregar '" .. caminho .. "'")
     end
-    local sp = self._e._e.sprites[c.sprite_id]
+    c.sprite_id  = spr._sid
+    local sp     = self._e._e.sprites[c.sprite_id]
     c.img_w  = sp.width  * c.escala
     c.img_h  = sp.height * c.escala
     table.insert(self._camadas, c)
@@ -84,10 +85,11 @@ end
 function Parallax:adicionar_sprite_regiao(caminho, rx, ry, rw, rh, cfg)
     local c      = _normalizar_cfg(cfg)
     c.tipo       = "sprite"
-    c.sprite_id  = self._e:carregar_sprite_regiao(caminho, rx, ry, rw, rh)
-    if c.sprite_id < 0 then
+    local spr    = self._e:criar_sprite(caminho, rx, ry, rw, rh)
+    if not spr then
         error("Parallax: não foi possível carregar região de '" .. caminho .. "'")
     end
+    c.sprite_id  = spr._sid
     c.img_w  = rw * c.escala
     c.img_h  = rh * c.escala
     table.insert(self._camadas, c)

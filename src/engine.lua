@@ -3,6 +3,7 @@
 local ffi = require("engineffi")
 local lib  = ffi.load("./libengine.so", true)   -- carrega a biblioteca C
 local C    = ffi.C                               -- acessa símbolos globais (fov, etc.)
+local bit = require("bit")
 local math = math
 
 local E = {}

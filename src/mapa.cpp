@@ -202,7 +202,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
      * ----------------------------------------------------------------------- */
     lua_getfield(L, -1, "camadas");
     if (lua_istable(L, -1)) {
-        int n_cam = (int)lua_objlen(L, -1);
+        int n_cam = (int)lua_rawlen(L, -1);
         for (int i = 1; i <= n_cam && m->n_camadas < MAPA_MAX_CAMADAS; i++) {
             lua_rawgeti(L, -1, i);               /* push camada[i]             */
             if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
@@ -215,7 +215,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
             /* tiles da camada */
             lua_getfield(L, -1, "tiles");
             if (lua_istable(L, -1)) {
-                int n_tiles = (int)lua_objlen(L, -1);
+                int n_tiles = (int)lua_rawlen(L, -1);
                 for (int ti = 1; ti <= n_tiles; ti++) {
                     lua_rawgeti(L, -1, ti);       /* push tile[ti]              */
                     if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
@@ -261,7 +261,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                      */
                     lua_getfield(L, -1, "anim_cols");
                     if (lua_istable(L, -1)) {
-                        int nf = (int)lua_objlen(L, -1);
+                        int nf = (int)lua_rawlen(L, -1);
                         for (int fi = 1; fi <= nf && fi <= 8; fi++) {
                             lua_rawgeti(L, -1, fi);
                             tile->anim_cols[fi-1] = (int)lua_tonumber(L, -1);
@@ -285,7 +285,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
      * ----------------------------------------------------------------------- */
     lua_getfield(L, -1, "objetos");
     if (lua_istable(L, -1)) {
-        int n_obj = (int)lua_objlen(L, -1);
+        int n_obj = (int)lua_rawlen(L, -1);
         for (int i = 1; i <= n_obj && m->n_objetos < MAPA_MAX_OBJETOS; i++) {
             lua_rawgeti(L, -1, i);
             if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
