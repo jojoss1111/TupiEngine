@@ -943,7 +943,7 @@ A grade é atualizada automaticamente a cada chamada de `jogo:mover()`. `sgrid_r
 | `jogo:sgrid_todas_colisoes(oid, max)` | object_id, limite | tabela de IDs |
 | `jogo:sgrid_ativo()` | — | `true` ou `false` |
 | `jogo:sgrid_destruir()` | — | — |
-
+[](url)
 ---
 
 ## Sistema de Mapas
@@ -957,6 +957,8 @@ O sistema de mapas é composto por três arquivos com responsabilidades distinta
 | `engine.lua` | Funções de alto nível: carregamento, renderização e colisão |
 
 O Lua descreve o conteúdo do mapa (tiles, camadas, objetos). A engine cuida de carregar o atlas, montar a tabela de colisores e renderizar cada frame.
+
+---
 
 ### Fluxo básico
 
@@ -973,11 +975,16 @@ if engine:colide_mapa(mapa, jogador) then
 end
 ```
 
-`engine:carregar_mapa()` lê o arquivo Lua, carrega o atlas na GPU e pré-computa a tabela de colisores — tudo em uma chamada. A partir daí, `desenhar_mapa()` e `colide_mapa()` são chamadas baratas por frame.
+`engine:carregar_mapa()` lê o arquivo Lua, carrega o atlas na GPU e pré-computa a tabela de
+colisores — tudo em uma chamada. A partir daí, `desenhar_mapa()` e `colide_mapa()` são
+chamadas baratas por frame.
+
+---
 
 ### Criando um arquivo de mapa
 
-O arquivo de mapa é um script Lua que usa o módulo `mapa.lua` para descrever tiles, camadas e objetos, e deve sempre terminar com `return m:build()`.
+O arquivo de mapa é um script Lua que usa o módulo `mapa.lua` para descrever tiles, camadas
+e objetos, e deve sempre terminar com `return m:build()`.
 
 **Estrutura mínima:**
 
@@ -988,14 +995,17 @@ local Mapa = require("mapa")
 local m = Mapa.novo(20, 15, 16, 16)   -- 20 colunas, 15 linhas, tiles de 16×16 px
 m:atlas("sprites/tileset.png")        -- spritesheet principal
 
--- ... definição de tiles e objetos ...
+-- ... definição de blocos, matriz e objetos ...
 
 return m:build()   -- NÃO remova esta linha
 ```
 
-**Método 1 — Matriz de blocos (recomendado)**
+---
 
-Defina protótipos com `criar_bloco()` e monte o layout com um array 1D. É a forma mais legível para mapas criados à mão.
+### Método principal — Matriz de blocos
+
+Registre protótipos com `criar_bloco()` e monte o layout com um array 1D usando
+`carregar_matriz()`. É a única forma suportada de popular o mapa.
 
 ```lua
 local Mapa = require("mapa")
@@ -1004,18 +1014,18 @@ m:atlas("sprites/tileset.png")
 
 local _ = 0   -- célula vazia
 
--- criar_bloco(nome, id, config)
--- config aceita: tiles={col, lin}, flags=Mapa.F.*, colide=1 (atalho para COLISOR)
-local G = m:criar_bloco("Grama",  1, { tiles = {0, 0} })
-local T = m:criar_bloco("Terra",  2, { tiles = {1, 0} })
-local P = m:criar_bloco("Parede", 3, { tiles = {2, 0}, colide = 1 })
-local A = m:criar_bloco("Agua",   4, { tiles = {0, 2}, flags = Mapa.F.AGUA })
+--                nome       id  col       lin   colide  loop   fps
+local G = m:criar_bloco("Grama",  1,  0,        0,    false, true,  0  )
+local T = m:criar_bloco("Terra",  2,  1,        0,    false, true,  0  )
+local P = m:criar_bloco("Parede", 3,  2,        1,    true,  true,  0  )
+local A = m:criar_bloco("Agua",   4, {0,1,2},   2,    false, true,  6  )
+local V = m:criar_bloco("Lava",   5, {0,1,2},  {2,2,3}, true, true, 8  )
 
 m:carregar_matriz({
     P, P, P, P, P, P, P, P, P, P,
     P, G, G, T, T, G, G, G, G, P,
     P, G, G, T, T, G, A, A, G, P,
-    P, G, G, G, G, G, A, A, G, P,
+    P, G, G, G, G, G, V, V, G, P,
     P, G, G, G, G, G, G, G, G, P,
     P, G, G, G, G, G, G, G, G, P,
     P, G, G, G, G, G, G, G, G, P,
@@ -1025,99 +1035,170 @@ m:carregar_matriz({
 return m:build()
 ```
 
-O array é lido linha por linha, da esquerda para a direita. O elemento `0` (ou `nil`) é ignorado — a célula fica vazia. A largura do mapa é usada automaticamente para converter o índice 1D em `(col, lin)`.
+O array é lido linha por linha, da esquerda para a direita. O elemento `0` (ou `nil`) é
+ignorado — a célula fica vazia. A largura do mapa é usada automaticamente para converter
+o índice 1D em `(col, lin)`.
 
-**Método 2 — Camadas com funções de preenchimento**
+---
 
-Para controle mais fino, crie camadas explicitamente e posicione tiles com as funções da camada.
+### `m:criar_bloco(nome, id, col, lin, colide, loop, fps, camada, sprite)`
 
-```lua
-local Mapa = require("mapa")
-local m = Mapa.novo(25, 18, 16, 16)
-m:atlas("sprites/tileset.png")
+Registra um protótipo de bloco. O tile é estático ou animado dependendo do tipo de `col`.
 
--- camada(nome, z_order)  — z_order menor = desenhado primeiro
-local chao    = m:camada("chao",      0)
-local paredes = m:camada("paredes",   1)
-local deco    = m:camada("decoracao", 2)
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `nome` | string | Nome descritivo (debug) |
+| `id` | inteiro | Chave usada na matriz (inteiro > 0) |
+| `col` | número **ou** tabela | Número → tile estático. Tabela `{0,1,2}` → frames de animação (colunas no atlas) |
+| `lin` | número **ou** tabela | Linha fixa no atlas, ou uma linha por frame `{2,2,3}` (ignorado se `col` for número) |
+| `colide` | bool/nil | `true` adiciona `MAPA_FLAG_COLISOR` automaticamente |
+| `loop` | bool | `true` = reinicia ao fim; `false` = congela no último frame (padrão `true`) |
+| `fps` | número | Frames por segundo da animação (padrão `4`; ignorado se estático) |
+| `camada` | número | Índice 0-based da camada de destino (padrão `0`) |
+| `sprite` | string/nil | Spritesheet alternativa; `nil` usa o atlas do mapa |
 
--- Preenche toda a área de chão com o tile (col=0, lin=0) do atlas
-chao:fill(0, 0, 24, 17, 0, 0)
+Retorna `id` para uso direto como variável na matriz.
 
--- Cria uma borda sólida com o tile (col=3, lin=1)
-paredes:borda(25, 18, 3, 1)
-
--- Tile individual: col, lin no mapa, col, lin no atlas, flags
-paredes:tile(5, 3, 1, 2, Mapa.F.COLISOR)
-
--- Linha horizontal de tiles
-paredes:linha_h(5, 11, 8, 0, 1, Mapa.F.COLISOR)
-
--- Linha vertical de tiles
-paredes:linha_v(12, 2, 7, 0, 1, Mapa.F.COLISOR)
-
--- Tile com animação de frames (desloca coluna no atlas, linha fixa)
-chao:tile_animado(10, 5, 2, {0, 1, 2, 3}, 8)
---                col lin lin_atlas frames  fps
-
--- Decoração sem colisão
-deco:tile(6, 4, 4, 0)
-
-return m:build()
-```
-
-Os dois métodos podem ser combinados: use `criar_bloco` + `carregar_matriz` para o chão e paredes, e camadas manuais para detalhes ou animações.
-
-### Objetos e triggers
-
-Objetos são entidades especiais posicionadas em tiles: baús, NPCs, portas, teleportes. Eles definem uma área de ativação (`raio` em tiles) e propriedades arbitrárias.
+**Exemplos:**
 
 ```lua
--- objeto(id, tipo, col, lin, raio, props, sprite_opcional)
-m:objeto(1, "npc",       10, 8,  2.0, { nome = "Fazendeiro", dialogo = "Bom dia!" })
-m:objeto(2, "bau",        3, 3,  1.5, { item = "enxada", quantidade = "1" })
-m:objeto(3, "teleporte", 13, 15, 1.0, { destino = "mapa_vila.lua", dest_col = "1", dest_lin = "7" })
+-- Tile estático sem colisão
+m:criar_bloco("Grama",    1,  0,        0,      false, true, 0)
+
+-- Tile estático com colisão
+m:criar_bloco("Parede",   2,  2,        1,      true,  true, 0)
+
+-- Tile animado — linha fixa no atlas, 3 frames, 6 fps, sem colisão
+m:criar_bloco("Agua",     3, {0,1,2},   2,      false, true, 6)
+
+-- Tile animado — linha diferente por frame, com colisão, sem loop
+m:criar_bloco("Lava",     4, {0,1,2},  {2,2,3}, true,  false, 8)
+
+-- Tile em camada diferente (ex: decoração por cima do chão)
+m:criar_bloco("Flor",     5,  4,        0,      false, true, 0, 1)
+
+-- Tile com spritesheet própria
+m:criar_bloco("Cristal",  6, {0,1,2,3}, 3,     false, true, 8, 0, "sprites/cristais.png")
 ```
 
-| String no Lua | Comportamento esperado |
-|---|---|
-| `"bau"` | Coleta ao pressionar `[E]` |
-| `"npc"` | Diálogo ao pressionar `[E]` |
-| `"porta"` | Abre/fecha mediante condição |
-| `"teleporte"` | Troca de mapa ao pisar |
-| `"script"` | Executa lógica definida em Lua |
-| `"generico"` | Sem comportamento predefinido |
+> **Regra:** se `col` for número → estático; se for tabela → animado. O flag `MAPA_FLAG_ANIMADO`
+> é setado automaticamente — não precisa ser passado manualmente.
 
-> Os tipos são apenas strings — a lógica de reação fica no seu `main.lua`. A engine só informa qual objeto está próximo do jogador.
+---
+
+### `m:carregar_matriz(layout, camada_idx?)`
+
+Preenche o mapa com um array 1D de IDs de bloco.
+
+```lua
+m:carregar_matriz(layout)          -- usa camada do próprio bloco (padrão)
+m:carregar_matriz(layout, 1)       -- força camada 1 para blocos sem camada definida
+```
+
+Cria camadas automaticamente caso o índice ainda não exista. Blocos animados e estáticos
+são despachados corretamente sem nenhuma chamada extra.
+
+---
+
+### `m:objeto(nome, id, col, lin, raio, sprite, anim_cols?, anim_lin?, fps?, loop?)`
+
+Registra um objeto especial no mapa (baú, NPC, teleporte, fogueira, etc.).
+
+| Parâmetro | Tipo | Descrição |
+|---|---|---|
+| `nome` | string | Nome descritivo |
+| `id` | inteiro | Identificador único |
+| `col`, `lin` | inteiro | Posição em tiles no mapa |
+| `raio` | número | Distância em tiles para ativar o trigger (padrão `1.5`) |
+| `sprite` | string/nil | Spritesheet do objeto; `nil` usa o atlas do mapa |
+| `anim_cols` | tabela/nil | `{0,1,2}` → objeto animado; `nil` → estático |
+| `anim_lin` | inteiro | Linha fixa no atlas durante a animação (padrão `0`) |
+| `fps` | número | Frames por segundo (padrão `4`; ignorado se estático) |
+| `loop` | bool | `true` = loop; `false` = congela no último frame (padrão `true`) |
+
+**Exemplos:**
+
+```lua
+-- Objeto estático
+m:objeto("Bau",      1, 5,  3, 1.5, "sprites/itens.png")
+
+-- Objeto animado (fogueira, 3 frames, linha 1 do atlas, 6 fps, em loop)
+m:objeto("Fogueira", 2, 8,  4, 2.0, nil, {0,1,2}, 1, 6, true)
+
+-- NPC sem sprite próprio (usa atlas do mapa), sem animação
+m:objeto("Aldeao",   3, 12, 7, 2.0)
+
+-- Portal animado que congela no último frame após ser ativado
+m:objeto("Portal",   4, 3, 11, 1.5, "sprites/portal.png", {0,1,2,3,4}, 0, 10, false)
+```
+
+> A lógica de reação ao objeto (coletar baú, iniciar diálogo, teleportar) fica no seu
+> `main.lua`. O mapa apenas registra a posição e o raio de ativação.
+
+---
+
+### `m:camada(nome, z_order, visivel?)`
+
+Cria uma camada vazia e a registra no mapa. Normalmente não é necessário criar camadas
+manualmente — `criar_bloco` + `carregar_matriz` gerencia isso automaticamente. Use apenas
+quando precisar de controle fino de z_order ou visibilidade.
+
+```lua
+local decoracao = m:camada("decoracao", 2)       -- z=2, visível
+local debug_col = m:camada("debug",     9, false) -- invisível por padrão
+```
+
+`z_order` menor = desenhado primeiro (fundo). `visivel` padrão é `true`.
+
+---
 
 ### Flags de bloco
 
-Flags controlam o comportamento físico e visual de cada tile. Combine-as com `bor()` (LuaJIT):
+Flags controlam o comportamento físico e visual de cada tile. São setadas automaticamente
+por `criar_bloco()` via os parâmetros `colide` e a detecção de animação. Para casos avançados,
+os valores estão disponíveis em `Mapa.F`:
 
 ```lua
--- Flags disponíveis em Mapa.F
-Mapa.F.NENHUM   -- 0      sem comportamento especial
-Mapa.F.COLISOR  -- 0x01   bloqueia movimento (AABB sólido)
-Mapa.F.TRIGGER  -- 0x02   dispara evento de proximidade
-Mapa.F.AGUA     -- 0x04   tratado como superfície aquática
-Mapa.F.ESCADA   -- 0x08   permite escalada
-Mapa.F.SOMBRA   -- 0x10   bloqueia o FOV
-Mapa.F.ANIMADO  -- 0x20   tile com animação de frames
-
--- Combinando flags
-local bit   = require("bit")
-local flags = bit.bor(Mapa.F.COLISOR, Mapa.F.SOMBRA)
+Mapa.F.NENHUM   -- 0x00  sem comportamento especial
+Mapa.F.COLISOR  -- 0x01  bloqueia movimento (AABB sólido)
+Mapa.F.TRIGGER  -- 0x02  dispara evento de proximidade
+Mapa.F.AGUA     -- 0x04  tratado como superfície aquática
+Mapa.F.ESCADA   -- 0x08  permite escalada
+Mapa.F.SOMBRA   -- 0x10  bloqueia o FOV
+Mapa.F.ANIMADO  -- 0x20  tile com animação de frames (setado automaticamente)
 ```
 
-No `criar_bloco()`, o atalho `colide = 1` equivale a `flags = Mapa.F.COLISOR` e pode ser usado junto com outras flags:
+> **LuaJIT:** os operadores `<<` e `|` do Lua 5.3+ não funcionam no LuaJIT. Use sempre
+> `bit.lshift()` e `bit.bor()` (já importados internamente pelo `mapa.lua`).
+
+---
+
+### Constantes de tile prontas
+
+`Mapa.TILES` exporta definições prontas para tilesets padrão. Ajuste `col` e `lin`
+conforme o seu spritesheet. Use com `Mapa.tile_de()` para extrair os parâmetros
+quando necessário em código de suporte.
 
 ```lua
--- Equivalentes:
-m:criar_bloco("Parede", 1, { tiles = {2, 0}, colide = 1 })
-m:criar_bloco("Parede", 1, { tiles = {2, 0}, flags = Mapa.F.COLISOR })
+Mapa.TILES.GRAMA         -- {col=0, lin=0, flags=NENHUM}
+Mapa.TILES.TERRA         -- {col=1, lin=0, flags=NENHUM}
+Mapa.TILES.AREIA         -- {col=2, lin=0, flags=NENHUM}
+Mapa.TILES.NEVE          -- {col=3, lin=0, flags=NENHUM}
+Mapa.TILES.PAREDE        -- {col=0, lin=1, flags=COLISOR|SOMBRA}
+Mapa.TILES.PEDRA         -- {col=1, lin=1, flags=COLISOR}
+Mapa.TILES.TIJOLO        -- {col=2, lin=1, flags=COLISOR}
+Mapa.TILES.AGUA          -- {col=0, lin=2, flags=AGUA}
+Mapa.TILES.LAVA          -- {col=1, lin=2, flags=AGUA|COLISOR}
+Mapa.TILES.ESCADA_BAIXO  -- {col=0, lin=3, flags=ESCADA}
+Mapa.TILES.ESCADA_CIMA   -- {col=1, lin=3, flags=ESCADA}
+Mapa.TILES.PORTA         -- {col=0, lin=4, flags=TRIGGER}
+Mapa.TILES.BAU           -- {col=1, lin=4, flags=TRIGGER}
+
+-- Extraindo parâmetros: tile_de(constante, flags_extra?) → sc, sl, flags
+local sc, sl, fl = Mapa.tile_de(Mapa.TILES.PAREDE)
 ```
 
-> **Atenção — LuaJIT:** os operadores `<<` e `|` do Lua 5.3+ não funcionam no LuaJIT. Use sempre `bit.lshift()` e `bit.bor()` (já importados internamente pelo `mapa.lua`).
+---
 
 ### API de alto nível — engine.lua
 
@@ -1127,103 +1208,107 @@ m:criar_bloco("Parede", 1, { tiles = {2, 0}, flags = Mapa.F.COLISOR })
 | `engine:desenhar_mapa(mapa)` | Tabela retornada por `carregar_mapa` | — | Renderiza todos os tiles visíveis |
 | `engine:colide_mapa(mapa, oid)` | Mapa, object_id | `true` ou `false` | Verifica colisão AABB do objeto com tiles sólidos |
 
-**Exemplo de loop com mapa:**
-
-```lua
-local mapa    = engine:carregar_mapa("mapa_fazenda.lua")
-local sprite  = engine:carregar_sprite("sprites/player.png")
-local jogador = engine:criar_objeto_tile(64, 64, sprite, 0, 0, 16, 16)
-engine:hitbox(jogador, 1, 4, 14, 12)
-
-local vel = 2
-local dx, dy = 0, 0
-
-while engine:rodando() do
-    engine:eventos()
-    engine:atualizar()
-    engine:limpar()
-
-    engine:desenhar_mapa(mapa)   -- sempre antes de engine:desenhar()
-
-    dx, dy = 0, 0
-    if engine:tecla("d") then dx =  vel end
-    if engine:tecla("a") then dx = -vel end
-    if engine:tecla("s") then dy =  vel end
-    if engine:tecla("w") then dy = -vel end
-
-    engine:mover(jogador, dx, dy)
-
-    if engine:colide_mapa(mapa, jogador) then
-        engine:mover(jogador, -dx, -dy)
-    end
-
-    engine:desenhar()
-    engine:apresentar()
-    engine:fps(60)
-end
-
-engine:destruir()
-```
+---
 
 ### API do módulo mapa.lua
-
-**Mapa:**
 
 | Função | Parâmetros | Descrição |
 |---|---|---|
 | `Mapa.novo(larg, alt, tw, th)` | Colunas, linhas, px por tile | Cria um mapa vazio |
 | `m:atlas(caminho)` | Arquivo PNG | Define o spritesheet principal |
-| `m:camada(nome, z_order)` | String, número | Cria e retorna uma camada |
-| `m:criar_bloco(nome, id, config)` | Nome, id inteiro, config | Registra um protótipo de bloco; retorna `id` |
-| `m:carregar_matriz(layout)` | Array 1D de IDs | Preenche camadas a partir de um layout visual |
-| `m:objeto(id, tipo, col, lin, raio, props, sprite?)` | Ver seção acima | Registra um objeto/trigger |
+| `m:camada(nome, z_order, visivel?)` | String, número, bool | Cria e retorna uma camada vazia |
+| `m:criar_bloco(nome, id, col, lin, colide, loop, fps, camada?, sprite?)` | Ver tabela acima | Registra protótipo; retorna `id` |
+| `m:carregar_matriz(layout, camada_idx?)` | Array 1D de IDs | Preenche o mapa a partir de um layout visual |
+| `m:objeto(nome, id, col, lin, raio, sprite?, anim_cols?, anim_lin?, fps?, loop?)` | Ver tabela acima | Registra um objeto/trigger |
 | `m:build()` | — | Serializa e retorna a tabela final para a engine |
 
-**Campos de `config` em `criar_bloco`:**
+---
 
-| Campo | Tipo | Descrição |
-|---|---|---|
-| `tiles` | `{col, lin}` | Posição do tile no atlas |
-| `flags` | `Mapa.F.*` | Bitmask de comportamento (padrão `0`) |
-| `colide` | `1` ou `0` | Atalho para `Mapa.F.COLISOR` |
-| `camada` | número | Índice da camada alvo (padrão `0`) |
-| `sprite` | string | Spritesheet alternativa para este bloco |
-
-**Camada:**
-
-| Função | Parâmetros | Descrição |
-|---|---|---|
-| `c:tile(col, lin, sc, sl, flags, sprite?)` | Posição no mapa, posição no atlas, flags | Define um tile individual |
-| `c:tile_animado(col, lin, lin_atlas, frames, fps, flags?)` | Posição, linha do atlas, lista de colunas, fps | Tile com animação de frames |
-| `c:fill(ci, li, cf, lf, sc, sl, flags?)` | Retângulo (col/lin ini e fim), tile, flags | Preenche uma área retangular |
-| `c:borda(larg, alt, sc, sl)` | Dimensões do mapa, tile | Cria borda sólida ao redor do mapa |
-| `c:linha_h(ci, cf, lin, sc, sl, flags?)` | Coluna inicial, final, linha, tile, flags | Linha horizontal de tiles |
-| `c:linha_v(col, li, lf, sc, sl, flags?)` | Coluna, linha inicial, final, tile, flags | Linha vertical de tiles |
-
-### Constantes de tile prontas
-
-O módulo exporta `Mapa.TILES` com definições prontas para tilesets padrão. Ajuste os valores de `col` e `lin` conforme o seu spritesheet.
+### Exemplo completo com loop
 
 ```lua
-Mapa.TILES.GRAMA         -- {col=0, lin=0, flags=NENHUM}
-Mapa.TILES.TERRA         -- {col=1, lin=0, flags=NENHUM}
-Mapa.TILES.PAREDE        -- {col=0, lin=1, flags=COLISOR|SOMBRA}
-Mapa.TILES.AGUA          -- {col=0, lin=2, flags=AGUA}
-Mapa.TILES.LAVA          -- {col=1, lin=2, flags=AGUA|COLISOR}
-Mapa.TILES.ESCADA_BAIXO  -- {col=0, lin=3, flags=ESCADA}
-Mapa.TILES.PORTA         -- {col=0, lin=4, flags=TRIGGER}
-Mapa.TILES.BAU           -- {col=1, lin=4, flags=TRIGGER}
-```
+local engine  = require("engine")
+local jogo    = engine.nova(320, 240, "Meu Jogo", 2)
 
-Use com `Mapa.tile_de()` para extrair os parâmetros:
+local mapa    = jogo:carregar_mapa("mapa_fazenda.lua")
+local sprite  = jogo:carregar_sprite("sprites/player.png")
+local jogador = jogo:criar_objeto_tile(64, 64, sprite, 0, 0, 16, 16)
+jogo:hitbox(jogador, 1, 4, 14, 12)
 
-```lua
--- tile_de(constante, flags_extra?) → sprite_col, sprite_lin, flags
-local sc, sl, fl = Mapa.tile_de(Mapa.TILES.PAREDE)
-chao:tile(3, 2, sc, sl, fl)
+local vel = 2
+local dx, dy = 0, 0
+
+while jogo:rodando() do
+    jogo:eventos()
+    jogo:atualizar()
+    jogo:limpar()
+
+    jogo:desenhar_mapa(mapa)   -- sempre antes de jogo:desenhar()
+
+    dx, dy = 0, 0
+    if jogo:tecla("d") then dx =  vel end
+    if jogo:tecla("a") then dx = -vel end
+    if jogo:tecla("s") then dy =  vel end
+    if jogo:tecla("w") then dy = -vel end
+
+    jogo:mover(jogador, dx, dy)
+
+    if jogo:colide_mapa(mapa, jogador) then
+        jogo:mover(jogador, -dx, -dy)
+    end
+
+    jogo:desenhar()
+    jogo:apresentar()
+    jogo:fps(60)
+end
+
+jogo:destruir()
 ```
 
 ---
+
+### Exemplo de arquivo de mapa completo
+
+```lua
+-- mapa_fazenda.lua
+local Mapa = require("mapa")
+
+local m = Mapa.novo(12, 10, 16, 16)
+m:atlas("sprites/tileset.png")
+
+local _ = 0
+
+--                  nome        id   col        lin     colide  loop   fps  camada
+local G = m:criar_bloco("Grama",   1,  0,         0,     false, true,  0)
+local T = m:criar_bloco("Terra",   2,  1,         0,     false, true,  0)
+local P = m:criar_bloco("Parede",  3,  2,         1,     true,  true,  0)
+local A = m:criar_bloco("Agua",    4, {0,1,2},    2,     false, true,  6)
+local F = m:criar_bloco("Flor",    5,  3,         0,     false, true,  0,  1)  -- camada 1
+
+m:carregar_matriz({
+    P, P, P, P, P, P, P, P, P, P, P, P,
+    P, G, G, G, G, G, G, G, G, G, G, P,
+    P, G, G, T, T, G, G, G, G, G, G, P,
+    P, G, T, T, T, T, G, A, A, A, G, P,
+    P, G, G, T, T, G, G, A, A, A, G, P,
+    P, G, G, G, G, G, G, G, G, G, G, P,
+    P, G, F, G, G, F, G, G, F, G, G, P,
+    P, G, G, G, G, G, G, G, G, G, G, P,
+    P, G, G, G, G, G, G, G, G, G, G, P,
+    P, P, P, P, P, P, P, P, P, P, P, P,
+})
+
+-- Objeto estático: baú
+m:objeto("Bau",      1,  4, 4, 1.5, "sprites/itens.png")
+
+-- Objeto animado: fogueira (3 frames, linha 1, 6 fps, loop)
+m:objeto("Fogueira", 2,  8, 6, 2.0, nil, {0,1,2}, 1, 6, true)
+
+-- NPC sem sprite próprio
+m:objeto("Aldeao",   3,  2, 7, 2.0)
+
+return m:build()
+```
 
 ## Exemplo Completo
 
