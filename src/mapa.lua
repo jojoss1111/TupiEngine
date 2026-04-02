@@ -1,30 +1,29 @@
---mapa.lua
+-- mapa.lua
 local bit = require("bit")
 local bor, lshift = bit.bor, bit.lshift
 
 local Mapa = {}
 Mapa.__index = Mapa
 
--- Flags de bloco (bitmask, espelham MAPA_FLAG_* do C++)
+-- Flags de tile (bitmask). Espelham MAPA_FLAG_* do C++.
 Mapa.F = {
     NENHUM  = 0,
-    COLISOR = lshift(1, 0),   -- 0x01
-    TRIGGER = lshift(1, 1),   -- 0x02
+    COLISOR = lshift(1, 0),   -- 0x01  bloqueia movimento
+    TRIGGER = lshift(1, 1),   -- 0x02  porta, baú, NPC...
     AGUA    = lshift(1, 2),   -- 0x04
     ESCADA  = lshift(1, 3),   -- 0x08
     SOMBRA  = lshift(1, 4),   -- 0x10
-    ANIMADO = lshift(1, 5),   -- 0x20
+    ANIMADO = lshift(1, 5),   -- 0x20  setado automaticamente em tiles animados
 }
 
 -- =============================================================================
--- Camada — interface interna; populada via carregar_matriz()
+-- Camada (interna)
 -- =============================================================================
 
 local Camada = {}
 Camada.__index = Camada
 
--- Insere um tile estático na camada.
--- Uso interno — chamado por carregar_matriz() com dados do template.
+-- Adiciona um tile estático.
 function Camada:_add_tile(col, lin, sprite_col, sprite_lin, flags, sprite)
     table.insert(self._tiles, {
         col        = col,
@@ -32,33 +31,36 @@ function Camada:_add_tile(col, lin, sprite_col, sprite_lin, flags, sprite)
         sprite_col = sprite_col,
         sprite_lin = sprite_lin,
         flags      = flags,
-        sprite     = sprite,   -- nil = usa atlas do mapa
+        sprite     = sprite,
     })
 end
 
--- Insere um tile animado na camada.
--- Uso interno — chamado por carregar_matriz() quando o template tem anim_cols.
+--[[
+    Adiciona um tile animado.
+    anim_cols → {c0,c1,...}  coluna do atlas por frame
+    anim_lins → {l0,l1,...}  linha do atlas por frame (nil = todos na sprite_lin)
+]]
 function Camada:_add_tile_animado(col, lin, sprite_lin, anim_cols, anim_lins,
                                    fps, loop, flags, sprite)
     table.insert(self._tiles, {
         col        = col,
         lin        = lin,
-        sprite_col = anim_cols[1],   -- frame inicial
+        sprite_col = anim_cols[1],
         sprite_lin = sprite_lin,
         flags      = bor(flags, Mapa.F.ANIMADO),
         sprite     = sprite,
-        anim_fps   = fps,
+        anim_fps   = fps  or 4,
+        anim_loop  = (loop ~= false),
         anim_cols  = anim_cols,
-        anim_lins  = anim_lins,      -- nil = todas na mesma linha (sprite_lin)
-        anim_loop  = loop,
+        anim_lins  = anim_lins,
     })
 end
 
--- Serializa a camada para o loader C++.
 function Camada:_to_table()
     return {
         nome    = self.nome,
-        z_order = self.z_order,
+        layer   = self.layer,
+        z       = self.z,
         visivel = self.visivel,
         tiles   = self._tiles,
     }
@@ -68,54 +70,90 @@ end
 -- Mapa
 -- =============================================================================
 
--- Mapa.novo(largura, altura, tile_w, tile_h)
+-- Cria um novo mapa. tile_w/h padrão: 16px.
 function Mapa.novo(largura, altura, tile_w, tile_h)
-    local self = setmetatable({}, Mapa)
+    local self  = setmetatable({}, Mapa)
     self.largura    = largura or 20
     self.altura     = altura  or 15
     self.tile_w     = tile_w  or 16
     self.tile_h     = tile_h  or 16
     self._atlas     = nil
-    self._camadas   = {}
+    self._camadas   = {}     -- lista de Camada (em ordem de inserção)
+    self._cam_index = {}     -- "layer:z" → Camada
     self._objetos   = {}
-    self._templates = {}   -- protótipos registrados por criar_bloco()
+    self._templates = {}
     return self
 end
 
--- :atlas(caminho)  — spritesheet principal do mapa
+-- Define o caminho do spritesheet principal.
 function Mapa:atlas(caminho)
     self._atlas = caminho
     return self
 end
 
--- :camada(nome, z_order, visivel)
--- Cria uma camada e a registra no mapa.
--- z_order menor = desenhado primeiro (fundo).
-function Mapa:camada(nome, z_order, visivel)
+-- =============================================================================
+-- _get_ou_criar_camada (interna)
+-- Retorna a camada para (layer, z), criando-a se necessário.
+-- =============================================================================
+function Mapa:_get_ou_criar_camada(layer, z, visivel)
+    layer = layer or 0
+    z     = z     or 0
+    local key = layer .. ":" .. z
+    if self._cam_index[key] then
+        return self._cam_index[key]
+    end
     local c = setmetatable({
-        nome    = nome,
-        z_order = z_order or #self._camadas,
+        nome    = "layer" .. layer .. "_z" .. z,
+        layer   = layer,
+        z       = z,
         visivel = visivel ~= false,
         _tiles  = {},
     }, Camada)
     table.insert(self._camadas, c)
+    self._cam_index[key] = c
     return c
 end
 
+-- =============================================================================
+-- :camada(id_bloco, layer, z)
+--
+-- Registra em qual camada de renderização um bloco deve aparecer.
+-- Pode ser chamado várias vezes para o mesmo bloco — ele aparece em todas.
+-- Se não for chamado, o bloco vai para layer=0, z=0.
+--
+-- Exemplo:
+--   m:camada(G, 0)      -- layer 0, z 0 (fundo)
+--   m:camada(P, 1)      -- layer 1, z 0
+--   m:camada(P, 1, 2)   -- mesmo bloco também em layer 1, z 2
+--
+-- Atenção: o bloco deve ter sido criado com :criar_bloco() antes.
+-- layer/z menores = desenhados primeiro (mais ao fundo).
+-- =============================================================================
+function Mapa:camada(id_bloco, layer, z)
+    layer = layer or 0
+    z     = z     or 0
+
+    self:_get_ou_criar_camada(layer, z)
+
+    local t = self._templates[id_bloco]
+    if not t then
+        error(("[mapa] camada(): bloco id=%d não existe"):format(id_bloco))
+    end
+
+    local key = layer .. ":" .. z
+    if not t._destinos then t._destinos = {} end
+    if not t._destinos[key] then
+        t._destinos[key] = { layer = layer, z = z }
+    end
+
+    return self
+end
+
+-- =============================================================================
 -- :objeto(nome, id, col, lin, raio, sprite, anim_cols, anim_lin, fps, loop)
---
---   nome      — nome descritivo (ex: "Bau", "Porta")
---   id        — identificador único (inteiro)
---   col, lin  — posição em tiles no mapa
---   raio      — distância (em tiles) para ativar o trigger
---   sprite    — caminho da spritesheet (nil = usa atlas do mapa)
---   anim_cols — {0,1,2,3} para objeto animado  (nil = estático)
---   anim_lin  — linha fixa no atlas durante a animação
---   fps       — frames por segundo (ignorado se anim_cols for nil)
---   loop      — true = anima em loop; false = congela no último frame
---
--- Exemplo estático:  M:objeto("Bau",   1, 5, 3, 1.5, "sprites/itens.png")
--- Exemplo animado:   M:objeto("Fogueira", 2, 8, 4, 2.0, nil, {0,1,2}, 1, 6, true)
+-- Adiciona um objeto interativo ao mapa (NPC, baú, porta...).
+-- raio = distância em tiles para ativar o trigger.
+-- =============================================================================
 function Mapa:objeto(nome, id, col, lin, raio, sprite,
                      anim_cols, anim_lin, fps, loop)
     local obj = {
@@ -126,41 +164,29 @@ function Mapa:objeto(nome, id, col, lin, raio, sprite,
         raio      = raio  or 1.5,
         sprite    = sprite,
         ativo     = true,
-        -- animação (opcionais)
-        anim_cols = anim_cols,                        -- nil = estático
+        anim_cols = anim_cols,
         anim_lin  = anim_lin  or 0,
         anim_fps  = fps       or 4,
-        anim_loop = (loop ~= false),                  -- padrão true
+        anim_loop = (loop ~= false),
     }
     table.insert(self._objetos, obj)
     return obj
 end
 
--- :criar_bloco(nome, id, col, lin, colide, loop, fps, camada, sprite)
+-- =============================================================================
+-- :criar_bloco(nome, id, col, lin, colide, loop, fps, sprite)
 --
---   nome   — nome descritivo do bloco (só para debug)
---   id     — chave usada na matriz de layout (inteiro > 0)
---   col    — coluna(s) no atlas:
---              número  → tile estático        ex: 3
---              tabela  → frames de animação   ex: {0,1,2,3}
---   lin    — linha(s) no atlas:
---              número  → linha fixa           ex: 2
---              tabela  → uma linha por frame  ex: {0,0,1,1}
---              (ignorado se col for número)
---   colide — true/1 → adiciona flag COLISOR automaticamente
---   loop   — true = animação em loop; false = congela no último frame
---              (ignorado para tiles estáticos)
---   fps    — frames por segundo da animação (padrão 4)
---   camada — índice da camada de destino (0-based, padrão 0)
---   sprite — spritesheet alternativa (nil = usa atlas do mapa)
+-- Define o protótipo de um tile. Use :camada() depois para posicioná-lo.
+-- col/lin podem ser números (tile estático) ou tabelas (tile animado).
 --
 -- Exemplos:
---   M:criar_bloco("Grama",    1,  0,      0,     false, true,  0)
---   M:criar_bloco("Parede",   2,  1,      1,     true,  true,  0)
---   M:criar_bloco("Agua",     3, {0,1,2}, 2,     false, true,  6)
---   M:criar_bloco("Lava",     4, {0,1,2}, {2,2,3}, true, true, 8)
-function Mapa:criar_bloco(nome, id, col, lin, colide, loop, fps, camada, sprite)
-    local F    = Mapa.F
+--   local G = m:criar_bloco("Grama",  1, 0, 0, false, true, 0)
+--   local P = m:criar_bloco("Parede", 2, 1, 1, true,  true, 0)
+--   local A = m:criar_bloco("Agua",   3, {0,1,2}, 2, false, true, 6)    -- colunas animadas
+--   local L = m:criar_bloco("Lava",   4, {0,1,2}, {2,2,3}, true, true, 8) -- col+lin animados
+-- =============================================================================
+function Mapa:criar_bloco(nome, id, col, lin, colide, loop, fps, sprite)
+    local F     = Mapa.F
     local flags = 0
 
     if colide then flags = bor(flags, F.COLISOR) end
@@ -171,15 +197,14 @@ function Mapa:criar_bloco(nome, id, col, lin, colide, loop, fps, camada, sprite)
     local sprite_col, sprite_lin
 
     if animado then
-        flags       = bor(flags, F.ANIMADO)
-        anim_cols   = col                              -- sequência de colunas
-        sprite_col  = col[1]                          -- frame inicial
-
+        flags      = bor(flags, F.ANIMADO)
+        anim_cols  = col
+        sprite_col = col[1]
         if type(lin) == "table" then
             anim_lins  = lin
             sprite_lin = lin[1]
         else
-            sprite_lin = lin or 0                     -- linha fixa
+            sprite_lin = lin or 0
         end
     else
         sprite_col = col or 0
@@ -191,59 +216,58 @@ function Mapa:criar_bloco(nome, id, col, lin, colide, loop, fps, camada, sprite)
         sprite_col = sprite_col,
         sprite_lin = sprite_lin,
         flags      = flags,
-        camada     = camada or 0,
         sprite     = sprite,
-        -- animação
         animado    = animado,
         anim_cols  = anim_cols,
         anim_lins  = anim_lins,
         anim_fps   = fps  or 4,
-        anim_loop  = (loop ~= false),                 -- padrão true
+        anim_loop  = (loop ~= false),
+        _destinos  = nil,   -- preenchido por :camada()
     }
     return id
 end
 
--- :carregar_matriz(layout, camada_idx)
+-- =============================================================================
+-- :carregar_matriz(layout)
 --
--- Preenche o mapa com um array 1D de IDs de bloco (0 ou nil = vazio).
--- Cria camadas automaticamente se necessário.
--- O tile animado ou estático é escolhido conforme o template.
-function Mapa:carregar_matriz(layout, camada_idx)
-    camada_idx = camada_idx or 0
-
+-- Preenche o mapa a partir de um array 1D de IDs de bloco (0/nil = vazio).
+-- Cada bloco vai para todas as camadas registradas via :camada().
+-- Se nenhuma camada foi registrada, usa layer=0, z=0.
+-- =============================================================================
+function Mapa:carregar_matriz(layout)
     for i, bloco_id in ipairs(layout) do
         if bloco_id and bloco_id ~= 0 then
             local t = self._templates[bloco_id]
             if t then
                 local col = (i - 1) % self.largura
                 local lin = math.floor((i - 1) / self.largura)
-                local cam = t.camada or camada_idx
 
-                -- garante que a camada existe
-                while #self._camadas < cam + 1 do
-                    self:camada("camada_" .. #self._camadas, #self._camadas)
+                local destinos = t._destinos
+                if not destinos or not next(destinos) then
+                    destinos = { ["0:0"] = { layer = 0, z = 0 } }
                 end
 
-                local c = self._camadas[cam + 1]
-
-                if t.animado then
-                    c:_add_tile_animado(
-                        col, lin,
-                        t.sprite_lin,
-                        t.anim_cols,
-                        t.anim_lins,
-                        t.anim_fps,
-                        t.anim_loop,
-                        t.flags,
-                        t.sprite
-                    )
-                else
-                    c:_add_tile(
-                        col, lin,
-                        t.sprite_col, t.sprite_lin,
-                        t.flags,
-                        t.sprite
-                    )
+                for _, dest in pairs(destinos) do
+                    local c = self:_get_ou_criar_camada(dest.layer, dest.z)
+                    if t.animado then
+                        c:_add_tile_animado(
+                            col, lin,
+                            t.sprite_lin,
+                            t.anim_cols,
+                            t.anim_lins,
+                            t.anim_fps,
+                            t.anim_loop,
+                            t.flags,
+                            t.sprite
+                        )
+                    else
+                        c:_add_tile(
+                            col, lin,
+                            t.sprite_col, t.sprite_lin,
+                            t.flags,
+                            t.sprite
+                        )
+                    end
                 end
             end
         end
@@ -251,8 +275,20 @@ function Mapa:carregar_matriz(layout, camada_idx)
     return self
 end
 
--- :build()  — serializa o mapa para a engine; chame no final e retorne o resultado
+-- =============================================================================
+-- :build()
+-- Serializa o mapa para engine:carregar_mapa(). Camadas ordenadas por (layer, z).
+-- =============================================================================
 function Mapa:build()
+    local ordenadas = {}
+    for _, c in ipairs(self._camadas) do
+        table.insert(ordenadas, c)
+    end
+    table.sort(ordenadas, function(a, b)
+        if a.layer ~= b.layer then return a.layer < b.layer end
+        return a.z < b.z
+    end)
+
     local data = {
         largura      = self.largura,
         altura       = self.altura,
@@ -262,7 +298,7 @@ function Mapa:build()
         camadas      = {},
         objetos      = {},
     }
-    for _, c in ipairs(self._camadas) do
+    for _, c in ipairs(ordenadas) do
         table.insert(data.camadas, c:_to_table())
     end
     for _, o in ipairs(self._objetos) do
@@ -272,37 +308,28 @@ function Mapa:build()
 end
 
 -- =============================================================================
--- Constantes de tile prontas (ajuste col/lin conforme seu spritesheet)
+-- Constantes de tile prontas
 -- =============================================================================
 
 local F = Mapa.F
 
 Mapa.TILES = {
-    -- Terreno
     GRAMA        = {col=0, lin=0, flags=F.NENHUM},
     TERRA        = {col=1, lin=0, flags=F.NENHUM},
     AREIA        = {col=2, lin=0, flags=F.NENHUM},
     NEVE         = {col=3, lin=0, flags=F.NENHUM},
-
-    -- Estruturas
     PAREDE       = {col=0, lin=1, flags=bor(F.COLISOR, F.SOMBRA)},
     PEDRA        = {col=1, lin=1, flags=F.COLISOR},
     TIJOLO       = {col=2, lin=1, flags=F.COLISOR},
-
-    -- Líquidos
     AGUA         = {col=0, lin=2, flags=F.AGUA},
     LAVA         = {col=1, lin=2, flags=bor(F.AGUA, F.COLISOR)},
-
-    -- Navegação
     ESCADA_BAIXO = {col=0, lin=3, flags=F.ESCADA},
     ESCADA_CIMA  = {col=1, lin=3, flags=F.ESCADA},
-
-    -- Interativos
     PORTA        = {col=0, lin=4, flags=F.TRIGGER},
     BAU          = {col=1, lin=4, flags=F.TRIGGER},
 }
 
--- Mapa.tile_de(constante, flags_extra?)  → sc, sl, flags
+-- Extrai col, lin, flags de uma entrada de TILES, aplicando flags extras se necessário.
 function Mapa.tile_de(t, flags_extra)
     local f = t.flags or 0
     if flags_extra then f = bor(f, flags_extra) end

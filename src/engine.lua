@@ -72,11 +72,35 @@ function E:limpar()
     lib.engine_clear(self._e)
 end
 
--- Desenha todos os objetos, partículas e fade ativos.
+-- Desenha todos os objetos ativos, ordenados por (layer, z_order), além de
+-- partículas e fade. Use junto com desenhar_mapa_ate/desenhar_mapa_de para
+-- intercalar o mapa com objetos de camadas diferentes.
 function E:desenhar()
     lib.engine_draw(self._e)
     lib.engine_particles_draw(self._e)
     lib.engine_fade_draw(self._e)
+end
+
+-- Desenha partículas e fade ativos. Use quando o loop intercala camadas
+-- manualmente (com desenhar_layer/desenhar_mapa_ate/desenhar_mapa_de) e
+-- precisa controlar onde efeitos aparecem na pilha de renderização.
+function E:desenhar_efeitos()
+    lib.engine_particles_draw(self._e)
+    lib.engine_fade_draw(self._e)
+end
+--[[
+    Desenha APENAS os objetos cuja camada (definida com :camada()) seja igual
+    a `layer`, ordenados por z_order. Útil para intercalar objetos entre
+    camadas do mapa sem usar engine_draw() completo.
+
+    Exemplo — player entre camada 0 (chão) e camada 1 (telhado):
+        v:desenhar_mapa_ate(mapa, 0)   -- tiles do chão
+        v:desenhar_layer(0)            -- objetos na camada 0 (player no chão)
+        v:desenhar_mapa_de(mapa, 1)    -- tiles do telhado por cima
+        -- (objetos em camada >= 1 seriam desenhados por uma chamada separada)
+]]
+function E:desenhar_layer(layer)
+    lib.engine_draw_layer(self._e, layer or 0)
 end
 
 -- Exibe o frame na tela. Chame no fim do loop.
@@ -1142,14 +1166,30 @@ function E:carregar_mapa(caminho)
     end
     dados._colisores = col_map
 
-    -- Pré-calcula lista de tiles para renderizar — feita uma única vez ao carregar.
+    -- Pré-calcula tiles por camada (layer, z) — feito uma única vez ao carregar.
+    -- Estrutura: _buckets = { {layer=N, z=N, tiles={...}}, ... } ordenado por (layer,z).
+    -- Isso preserva a ordem de renderização e permite intercalar objetos entre camadas.
     local tw = dados.tile_w or 16
     local th = dados.tile_h or 16
-    local render = {}
+
+    local bucket_index = {}   -- "layer:z" → bucket
+    local buckets      = {}
+
     for _, camada in ipairs(dados.camadas or {}) do
         if camada.visivel ~= false then
+            local layer = camada.layer or 0
+            local z     = camada.z     or 0
+            local key   = layer .. ":" .. z
+
+            if not bucket_index[key] then
+                local b = { layer = layer, z = z, tiles = {} }
+                bucket_index[key] = b
+                buckets[#buckets + 1] = b
+            end
+            local bucket = bucket_index[key]
+
             for _, tile in ipairs(camada.tiles or {}) do
-                render[#render + 1] = {
+                bucket.tiles[#bucket.tiles + 1] = {
                     px         = tile.col        * tw,
                     py         = tile.lin        * th,
                     sx         = tile.sprite_col * tw,
@@ -1158,34 +1198,111 @@ function E:carregar_mapa(caminho)
                     anim_cols  = tile.anim_cols,
                     anim_lins  = tile.anim_lins,
                     anim_fps   = tile.anim_fps,
+                    -- anim_loop=false trava no último frame; nil/true = loop infinito
+                    anim_loop  = tile.anim_loop,
+                    -- momento (em segundos de jogo) em que a animação foi iniciada;
+                    -- usado para calcular o frame correto com loop=false
+                    anim_start = 0,
                 }
             end
         end
     end
-    dados._render = render
-    dados._tile_w = tw
-    dados._tile_h = th
+
+    -- Ordena buckets por (layer, z) para renderização correta.
+    table.sort(buckets, function(a, b)
+        if a.layer ~= b.layer then return a.layer < b.layer end
+        return a.z < b.z
+    end)
+
+    dados._buckets = buckets
+    dados._tile_w  = tw
+    dados._tile_h  = th
 
     return dados
 end
 
--- Desenha todos os tiles do mapa. Chame no loop ANTES de engine:desenhar().
-function E:desenhar_mapa(mapa)
-    local sid   = mapa._atlas_sid
-    local tw    = mapa._tile_w
-    local th    = mapa._tile_h
-    local tempo = lib.engine_get_time(self._e)
-    if not sid or sid < 0 then return end
-    for _, t in ipairs(mapa._render) do
+-- Desenha tiles de um bucket respeitando anim_loop.
+local function _desenhar_bucket(lib, e_ptr, sid, tw, th, tempo, bucket)
+    for _, t in ipairs(bucket.tiles) do
         local sx, sy = t.sx, t.sy
         if t.anim_cols then
-            local fps   = t.anim_fps or 4
-            local nf    = #t.anim_cols
-            local frame = math.floor(tempo * fps) % nf + 1
+            local fps  = t.anim_fps or 4
+            local nf   = #t.anim_cols
+            local loop = t.anim_loop  -- nil ou true = loop; false = congela no fim
+
+            local frame
+            if loop == false then
+                -- Sem loop: calcula quantos frames já passaram e trava no último.
+                local elapsed = tempo - (t.anim_start or 0)
+                frame = math.floor(elapsed * fps) + 1
+                if frame > nf then frame = nf end
+            else
+                -- Loop infinito (comportamento padrão).
+                frame = math.floor(tempo * fps) % nf + 1
+            end
+
             sx = t.anim_cols[frame] * tw
             sy = (t.anim_lins and t.anim_lins[frame] or t.sprite_lin) * th
         end
-        lib.engine_draw_sprite_part(self._e, sid, t.px, t.py, sx, sy, tw, th)
+        lib.engine_draw_sprite_part(e_ptr, sid, t.px, t.py, sx, sy, tw, th)
+    end
+end
+
+--[[
+    :desenhar_mapa(mapa)
+    Desenha TODAS as camadas do mapa em ordem (layer, z).
+    Chame no loop ANTES de engine:desenhar() se o player deve ficar
+    sempre por cima de tudo. Para intercalar, use as variantes abaixo.
+]]
+function E:desenhar_mapa(mapa)
+    local sid = mapa._atlas_sid
+    if not sid or sid < 0 then return end
+    local tw    = mapa._tile_w
+    local th    = mapa._tile_h
+    local tempo = lib.engine_get_time(self._e)
+    for _, bucket in ipairs(mapa._buckets or {}) do
+        _desenhar_bucket(lib, self._e, sid, tw, th, tempo, bucket)
+    end
+end
+
+--[[
+    :desenhar_mapa_ate(mapa, layer_max)
+    Desenha apenas as camadas com layer <= layer_max.
+    Use para colocar objetos SOBRE determinadas camadas do mapa.
+
+    Exemplo — player entre camada 0 (chão) e camada 1 (telhado):
+        v:desenhar_mapa_ate(mapa, 0)   -- chão
+        v:desenhar()                   -- player e objetos
+        v:desenhar_mapa_de(mapa, 1)    -- telhado por cima
+]]
+function E:desenhar_mapa_ate(mapa, layer_max)
+    local sid = mapa._atlas_sid
+    if not sid or sid < 0 then return end
+    local tw    = mapa._tile_w
+    local th    = mapa._tile_h
+    local tempo = lib.engine_get_time(self._e)
+    for _, bucket in ipairs(mapa._buckets or {}) do
+        if bucket.layer <= layer_max then
+            _desenhar_bucket(lib, self._e, sid, tw, th, tempo, bucket)
+        end
+    end
+end
+
+--[[
+    :desenhar_mapa_de(mapa, layer_min)
+    Desenha apenas as camadas com layer >= layer_min.
+    Use em par com desenhar_mapa_ate() para intercalar objetos.
+]]
+function E:desenhar_mapa_de(mapa, layer_min)
+    local sid = mapa._atlas_sid
+    if not sid or sid < 0 then return end
+    local tw    = mapa._tile_w
+    local th    = mapa._tile_h
+    local tempo = lib.engine_get_time(self._e)
+    for _, bucket in ipairs(mapa._buckets or {}) do
+        if bucket.layer >= layer_min then
+            _desenhar_bucket(lib, self._e, sid, tw, th, tempo, bucket)
+        end
     end
 end
 

@@ -1,26 +1,4 @@
-/*
- * mapa.cpp — Implementação do sistema de mapas 2D.
- *
- * Responsabilidades:
- *   - Carregar mapas via Lua (lua_State) a partir de tabela MapData
- *   - Renderizar camadas de tiles usando engine_draw_sprite_part()
- *   - Detectar colisão AABB com tiles sólidos
- *   - Processar triggers de proximidade (baú, porta, NPC, etc.)
- *
- * Flags de tile aceitam bitmask numérico direto do Lua (uint8_t) OU
- * tabela de strings legíveis — ambos são suportados por _parse_flags_lua().
- *
- * Animação de tiles funciona por deslocamento de tile_col no atlas (a linha
- * fica fixa). Isso é compatível com qualquer tileset clássico 2D sem precisar
- * de múltiplos sprite_ids pré-carregados.
- *
- * O Lua NÃO renderiza nada — apenas descreve a estrutura do mapa.
- * Todo o rendering é feito aqui em C++.
- *
- * Dependências externas:
- *   - Engine.hpp / libengine.so   → renderização e sprites
- *   - lua.hpp (LuaJIT)            → parser do formato .lua
- */
+//mapa.cpp
 
 #include "mapa.hpp"
 
@@ -29,7 +7,6 @@
 #include <cstdlib>
 #include <cmath>
 
-/* LuaJIT — ajuste o include path conforme seu projeto */
 extern "C" {
 #include <lua.h>
 #include <lauxlib.h>
@@ -49,43 +26,28 @@ static void _limpar_mapa(MapaDados *m)
     m->carregado    = 0;
 }
 
-/* Distância em tiles entre um ponto pixel e um objeto */
+/* Distância em tiles entre um ponto pixel e o centro de um objeto. */
 static float _distancia_tile(MapaDados *m, float px, float py,
                               const MapaObjeto *obj)
 {
     float ox = (float)(obj->col * m->tile_w + m->tile_w / 2);
     float oy = (float)(obj->lin * m->tile_h + m->tile_h / 2);
-    float dx = px - ox;
-    float dy = py - oy;
-    float dist_px = sqrtf(dx * dx + dy * dy);
-    /* converte para unidades de tile */
+    float dx = px - ox, dy = py - oy;
     float tile_size = (float)((m->tile_w + m->tile_h) / 2);
-    return dist_px / tile_size;
+    return sqrtf(dx*dx + dy*dy) / tile_size;
 }
 
 /* =============================================================================
- * API pública — Ciclo de vida
+ * Ciclo de vida
  * ============================================================================= */
 
-void mapa_init(MapaDados *m)
-{
-    _limpar_mapa(m);
-}
-
-void mapa_destruir(MapaDados *m)
-{
-    /* Por ora todos os dados são estáticos (sem heap). */
-    _limpar_mapa(m);
-}
+void mapa_init(MapaDados *m)    { _limpar_mapa(m); }
+void mapa_destruir(MapaDados *m){ _limpar_mapa(m); }  /* sem heap; zera tudo */
 
 /* =============================================================================
- * Loader Lua
- *
- * O arquivo .lua deve retornar uma tabela MapData com o mesmo esquema.
- * Ver mapa.lua para o formato completo e funções auxiliares.
+ * Helpers de leitura da stack Lua
  * ============================================================================= */
 
-/* Lê string de campo da tabela no topo da stack */
 static const char *_lua_str(lua_State *L, const char *campo, const char *def)
 {
     lua_getfield(L, -1, campo);
@@ -115,10 +77,10 @@ static int _lua_bool(lua_State *L, const char *campo, int def)
     return v;
 }
 
-/* Mapeia string de tipo para TriggerTipo */
+/* Converte string de tipo de objeto para TriggerTipo. */
 static int _parse_tipo_objeto(const char *s)
 {
-    if (!s) return TRIGGER_TIPO_GENERICO;
+    if (!s)                         return TRIGGER_TIPO_GENERICO;
     if (strcmp(s, "bau")       == 0) return TRIGGER_TIPO_BAU;
     if (strcmp(s, "porta")     == 0) return TRIGGER_TIPO_PORTA;
     if (strcmp(s, "npc")       == 0) return TRIGGER_TIPO_NPC;
@@ -128,25 +90,22 @@ static int _parse_tipo_objeto(const char *s)
 }
 
 /*
- * _parse_flags_lua — aceita dois formatos no campo "flags" da tabela Lua:
+ * _parse_flags_lua — lê o campo "flags" em dois formatos:
  *
- *   1. Bitmask numérico (rápido, sem strcmp):
- *        flags = 0x01          -- MAPA_FLAG_COLISOR
- *        flags = 0x01 | 0x10   -- MAPA_FLAG_COLISOR | MAPA_FLAG_SOMBRA
+ *   1. Bitmask numérico (rápido):
+ *        flags = 0x01          -- COLISOR
+ *        flags = 0x01 | 0x10   -- COLISOR | SOMBRA
  *
- *   2. Tabela de strings (legível, compatível com código legado):
+ *   2. Tabela de strings (legível):
  *        flags = {"colisor", "sombra"}
  *
- * Ambas as formas podem ser usadas no mesmo mapa sem problema.
- * Espera o valor de "flags" já no topo da stack (lua_getfield já chamado).
+ * Espera o valor de "flags" já no topo da stack.
  */
 static uint8_t _parse_flags_lua(lua_State *L)
 {
-    /* Formato 1: número direto — path rápido, sem iteração */
     if (lua_isnumber(L, -1))
         return (uint8_t)(int)lua_tonumber(L, -1);
 
-    /* Formato 2: tabela de strings — compatibilidade legada */
     uint8_t f = 0;
     if (!lua_istable(L, -1)) return f;
     lua_pushnil(L);
@@ -165,6 +124,12 @@ static uint8_t _parse_flags_lua(lua_State *L)
     return f;
 }
 
+/* =============================================================================
+ * mapa_carregar_lua — carrega e parseia um arquivo .lua de mapa.
+ *
+ * O arquivo deve retornar m:build() (ver mapa.lua).
+ * Retorna 1 em sucesso, 0 em erro.
+ * ============================================================================= */
 int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
 {
     _limpar_mapa(m);
@@ -173,14 +138,14 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
     luaL_openlibs(L);
 
     if (luaL_loadfile(L, caminho) || lua_pcall(L, 0, 1, 0)) {
-        fprintf(stderr, "[mapa] Erro ao carregar Lua '%s': %s\n",
+        fprintf(stderr, "[mapa] Erro ao carregar '%s': %s\n",
                 caminho, lua_tostring(L, -1));
         lua_close(L);
         return 0;
     }
 
     if (!lua_istable(L, -1)) {
-        fprintf(stderr, "[mapa] '%s' deve retornar uma tabela MapData\n", caminho);
+        fprintf(stderr, "[mapa] '%s' deve retornar m:build()\n", caminho);
         lua_close(L);
         return 0;
     }
@@ -197,14 +162,14 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
         m->sprite_atlas = engine_load_sprite(e, lua_tostring(L, -1));
     lua_pop(L, 1);
 
-    /* -----------------------------------------------------------------------
+    /* ------------------------------------------------------------------
      * Camadas
-     * ----------------------------------------------------------------------- */
+     * ------------------------------------------------------------------ */
     lua_getfield(L, -1, "camadas");
     if (lua_istable(L, -1)) {
         int n_cam = (int)lua_rawlen(L, -1);
         for (int i = 1; i <= n_cam && m->n_camadas < MAPA_MAX_CAMADAS; i++) {
-            lua_rawgeti(L, -1, i);               /* push camada[i]             */
+            lua_rawgeti(L, -1, i);
             if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
             MapaCamada *c = &m->camadas[m->n_camadas++];
@@ -212,12 +177,11 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
             c->visivel = _lua_bool(L, "visivel", 1);
             c->z_order = _lua_int (L, "z_order", m->n_camadas - 1);
 
-            /* tiles da camada */
             lua_getfield(L, -1, "tiles");
             if (lua_istable(L, -1)) {
                 int n_tiles = (int)lua_rawlen(L, -1);
                 for (int ti = 1; ti <= n_tiles; ti++) {
-                    lua_rawgeti(L, -1, ti);       /* push tile[ti]              */
+                    lua_rawgeti(L, -1, ti);
                     if (!lua_istable(L, -1)) { lua_pop(L, 1); continue; }
 
                     int col = _lua_int(L, "col", 0);
@@ -230,7 +194,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
 
                     MapaTile *tile = &c->tiles[lin * m->largura + col];
 
-                    /* sprite customizado ou usa atlas */
+                    /* sprite: usa campo "sprite" ou cai no atlas principal */
                     lua_getfield(L, -1, "sprite");
                     if (lua_isstring(L, -1))
                         tile->sprite_id = engine_load_sprite(e, lua_tostring(L, -1));
@@ -242,7 +206,6 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                     tile->tile_lin = _lua_int  (L, "sprite_lin", 0);
                     tile->anim_fps = _lua_float(L, "anim_fps",   0.f);
 
-                    /* flags — aceita número (bitmask) ou tabela de strings */
                     lua_getfield(L, -1, "flags");
                     tile->flags = _parse_flags_lua(L);
                     lua_pop(L, 1);
@@ -251,13 +214,8 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                         tile->flags |= MAPA_FLAG_ANIMADO;
 
                     /*
-                     * anim_cols — sequência de tile_col para cada frame.
-                     * A linha (tile_lin) permanece fixa durante a animação,
-                     * o que é o padrão de tilesets 2D clássicos.
-                     *
-                     * Exemplo Lua:
-                     *   chao:tile_animado(2, 5, {0,1,2,3}, 8)
-                     *   -- frames nas colunas 0,1,2,3 da mesma linha
+                     * anim_cols — colunas do atlas por frame.
+                     * Linha permanece fixa (padrão de tilesets clássicos).
                      */
                     lua_getfield(L, -1, "anim_cols");
                     if (lua_istable(L, -1)) {
@@ -269,7 +227,27 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                         }
                         tile->n_frames = (nf > 8) ? 8 : nf;
                     }
-                    lua_pop(L, 1);  /* anim_cols */
+                    lua_pop(L, 1);
+
+                    /*
+                     * anim_lins — linha do atlas por frame (opcional).
+                     * Codificado em anim_cols como: col | (lin << 8).
+                     * A renderização desempacota se o valor > 255.
+                     */
+                    lua_getfield(L, -1, "anim_lins");
+                    if (lua_istable(L, -1) && tile->n_frames > 0) {
+                        int nl = (int)lua_rawlen(L, -1);
+                        for (int fi = 1; fi <= nl && fi <= tile->n_frames; fi++) {
+                            lua_rawgeti(L, -1, fi);
+                            int lin_frame = (int)lua_tonumber(L, -1);
+                            lua_pop(L, 1);
+                            tile->anim_cols[fi-1] =
+                                (tile->anim_cols[fi-1] & 0xFF) |
+                                ((lin_frame & 0xFF) << 8);
+                        }
+                        tile->flags |= MAPA_FLAG_ANIMADO;
+                    }
+                    lua_pop(L, 1);  /* anim_lins */
 
                     lua_pop(L, 1);  /* tile[ti] */
                 }
@@ -280,9 +258,9 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
     }
     lua_pop(L, 1);  /* camadas */
 
-    /* -----------------------------------------------------------------------
+    /* ------------------------------------------------------------------
      * Objetos
-     * ----------------------------------------------------------------------- */
+     * ------------------------------------------------------------------ */
     lua_getfield(L, -1, "objetos");
     if (lua_istable(L, -1)) {
         int n_obj = (int)lua_rawlen(L, -1);
@@ -303,7 +281,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                            engine_load_sprite(e, lua_tostring(L, -1)) : -1;
             lua_pop(L, 1);
 
-            /* props extras */
+            /* props extras (pares chave/valor string) */
             lua_getfield(L, -1, "props");
             if (lua_istable(L, -1)) {
                 lua_pushnil(L);
@@ -317,7 +295,6 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                 }
             }
             lua_pop(L, 1);  /* props */
-
             lua_pop(L, 1);  /* objeto[i] */
         }
     }
@@ -325,7 +302,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
 
     lua_close(L);
     m->carregado = 1;
-    printf("[mapa] Lua carregado: %dx%d tiles, %d camadas, %d objetos\n",
+    printf("[mapa] Carregado: %dx%d tiles, %d camadas, %d objetos\n",
            m->largura, m->altura, m->n_camadas, m->n_objetos);
     return 1;
 }
@@ -350,24 +327,29 @@ void mapa_desenhar_camada(MapaDados *m, Engine *e, int ci)
             int sx = t->tile_col * m->tile_w;
             int sy = t->tile_lin * m->tile_h;
 
-            /* Tile animado: desloca tile_col no atlas mantendo tile_lin fixo */
+            /*
+             * Tile animado: anim_cols[] armazena o frame a usar.
+             * Formato do valor:
+             *   valor <= 0xFF  → apenas coluna (linha fixa = tile_lin)
+             *   valor >  0xFF  → col em bits 0-7, lin em bits 8-15
+             */
             if ((t->flags & MAPA_FLAG_ANIMADO) && t->n_frames > 0 &&
                 t->anim_fps > 0.f) {
-                double tempo = engine_get_time(e);
-                int frame    = (int)(tempo * t->anim_fps) % t->n_frames;
-                int anim_col = t->anim_cols[frame];
+                int frame    = (int)(engine_get_time(e) * t->anim_fps) % t->n_frames;
+                int packed   = t->anim_cols[frame];
+                int anim_col = packed & 0xFF;
+                int anim_lin = (packed > 0xFF) ? ((packed >> 8) & 0xFF) : t->tile_lin;
                 sx = anim_col * m->tile_w;
-                /* sy (tile_lin) permanece o mesmo calculado acima */
-                engine_draw_sprite_part(e, t->sprite_id, px, py,
-                                        sx, sy, m->tile_w, m->tile_h);
-            } else {
-                engine_draw_sprite_part(e, t->sprite_id, px, py,
-                                        sx, sy, m->tile_w, m->tile_h);
+                sy = anim_lin * m->tile_h;
             }
+
+            engine_draw_sprite_part(e, t->sprite_id, px, py,
+                                    sx, sy, m->tile_w, m->tile_h);
         }
     }
 }
 
+/* Desenha objetos ativos que tenham sprite. */
 void mapa_desenhar_objetos(MapaDados *m, Engine *e)
 {
     for (int i = 0; i < m->n_objetos; i++) {
@@ -380,10 +362,10 @@ void mapa_desenhar_objetos(MapaDados *m, Engine *e)
     }
 }
 
+/* Desenha todas as camadas (na ordem declarada) e depois os objetos. */
 void mapa_desenhar(MapaDados *m, Engine *e)
 {
     if (!m->carregado) return;
-    /* Desenha em ordem de z_order (simples: itera na ordem declarada) */
     for (int i = 0; i < m->n_camadas; i++)
         mapa_desenhar_camada(m, e, i);
     mapa_desenhar_objetos(m, e);
@@ -393,6 +375,7 @@ void mapa_desenhar(MapaDados *m, Engine *e)
  * Consultas de tile
  * ============================================================================= */
 
+/* Retorna ponteiro para o tile em (camada, col, lin), ou NULL se inválido. */
 MapaTile *mapa_get_tile(MapaDados *m, int camada, int col, int lin)
 {
     if (camada < 0 || camada >= m->n_camadas) return NULL;
@@ -401,6 +384,7 @@ MapaTile *mapa_get_tile(MapaDados *m, int camada, int col, int lin)
     return &m->camadas[camada].tiles[lin * m->largura + col];
 }
 
+/* true se qualquer camada tem COLISOR na posição (col, lin). */
 int mapa_colisor(MapaDados *m, int col, int lin)
 {
     for (int i = 0; i < m->n_camadas; i++) {
@@ -410,6 +394,7 @@ int mapa_colisor(MapaDados *m, int col, int lin)
     return 0;
 }
 
+/* Retorna o OR de todas as flags de todas as camadas na posição (col, lin). */
 int mapa_flags(MapaDados *m, int col, int lin)
 {
     int f = 0;
@@ -440,6 +425,8 @@ void mapa_tile_para_pixel(MapaDados *m, int col, int lin, int *out_x, int *out_y
  * Triggers e objetos
  * ============================================================================= */
 
+/* Verifica se o ponto pixel (px, py) está dentro do raio de algum objeto ativo.
+ * Retorna o primeiro encontrado. */
 MapaVerificacao mapa_verificar_trigger(MapaDados *m, float px, float py)
 {
     MapaVerificacao v = { MAPA_TRIGGER_NENHUM, NULL, 0.f };
@@ -451,12 +438,13 @@ MapaVerificacao mapa_verificar_trigger(MapaDados *m, float px, float py)
             v.resultado = MAPA_TRIGGER_ATIVO;
             v.objeto    = o;
             v.distancia = dist;
-            return v;   /* retorna o primeiro trigger encontrado */
+            return v;
         }
     }
     return v;
 }
 
+/* Busca objeto por id. Retorna NULL se não encontrar. */
 MapaObjeto *mapa_get_objeto(MapaDados *m, int id)
 {
     for (int i = 0; i < m->n_objetos; i++)
@@ -464,6 +452,7 @@ MapaObjeto *mapa_get_objeto(MapaDados *m, int id)
     return NULL;
 }
 
+/* Desativa um objeto (não é mais desenhado nem dispara trigger). */
 void mapa_desativar_objeto(MapaDados *m, int id)
 {
     MapaObjeto *o = mapa_get_objeto(m, id);
@@ -474,12 +463,14 @@ void mapa_desativar_objeto(MapaDados *m, int id)
  * Câmera do mapa
  * ============================================================================= */
 
+/* Define o deslocamento do mapa em pixels (scroll). */
 void mapa_set_offset(MapaDados *m, int ox, int oy)
 {
     m->offset_x = ox;
     m->offset_y = oy;
 }
 
+/* Centraliza o mapa no tile (col, lin) em relação à tela. */
 void mapa_centralizar_em(MapaDados *m, Engine *e, int col, int lin)
 {
     int px = col * m->tile_w;
@@ -494,6 +485,7 @@ void mapa_centralizar_em(MapaDados *m, Engine *e, int col, int lin)
  * Modificação em tempo de execução
  * ============================================================================= */
 
+/* Substitui um tile em (camada, col, lin) com sprite e flags novos. */
 void mapa_set_tile(MapaDados *m, int camada, int col, int lin,
                    int sprite_id, int tile_col, int tile_lin, uint8_t flags)
 {
@@ -506,21 +498,19 @@ void mapa_set_tile(MapaDados *m, int camada, int col, int lin,
 }
 
 /*
- * mapa_set_tile_atlas — variante de mapa_set_tile que usa o atlas principal
- * do mapa como sprite_id automaticamente. Preferível quando todos os tiles
- * vêm do mesmo tileset (o caso mais comum ao usar carregar_matriz() no Lua).
+ * mapa_set_tile_atlas — igual a mapa_set_tile, mas usa o atlas principal
+ * automaticamente. Preferível quando todos os tiles vêm do mesmo tileset.
  *
- * tile_col, tile_lin → coordenadas do tile na grade do atlas (não em pixels).
- * flags              → bitmask MAPA_FLAG_* (ex: MAPA_FLAG_COLISOR | MAPA_FLAG_SOMBRA).
+ * tile_col, tile_lin → posição na grade do atlas (não em pixels).
  *
  * Exemplo:
- *   // coloca tile da coluna 0, linha 1 do atlas na posição (3,2) da camada 0
  *   mapa_set_tile_atlas(m, 0, 3, 2, 0, 1, MAPA_FLAG_COLISOR);
+ *   // coloca tile (col=0, lin=1) do atlas na posição (3,2) da camada 0
  */
 void mapa_set_tile_atlas(MapaDados *m, int camada, int col, int lin,
                          int tile_col, int tile_lin, uint8_t flags)
 {
     mapa_set_tile(m, camada, col, lin,
-                  m->sprite_atlas,   /* usa atlas principal automaticamente */
+                  m->sprite_atlas,
                   tile_col, tile_lin, flags);
 }

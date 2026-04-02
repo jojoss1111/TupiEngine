@@ -2346,50 +2346,110 @@ void engine_clear(Engine *e)       { RENDERER(e)->clear(e); }
 void engine_flush(Engine *e)       { RENDERER(e)->flush(e); }
 void engine_present(Engine *e)     { RENDERER(e)->present(e); }
 
+/* _draw_object() — desenha um único objeto (fatorado para reutilização) */
+static void _draw_object(Engine *e, IRenderer *r, int i)
+{
+    const GameObject &obj = e->objects[i];
+    if (!obj.active) return;
+
+    const float ox = static_cast<float>(obj.x);
+    const float oy = static_cast<float>(obj.y);
+
+    if (_sid_valid(e, obj.sprite_id)) {
+        const SpriteData &sp = e->sprites[obj.sprite_id];
+        if (!sp.loaded) return;
+
+        float u0, v0, u1, v1, dw, dh;
+        if (obj.use_tile) {
+            const int px = obj.tile_x * obj.tile_w;
+            const int py = obj.tile_y * obj.tile_h;
+            _uv_for_tile(&sp, px, py, obj.tile_w, obj.tile_h, &u0,&v0,&u1,&v1);
+            dw = static_cast<float>(obj.tile_w) * obj.scale_x;
+            dh = static_cast<float>(obj.tile_h) * obj.scale_y;
+        } else {
+            u0 = 0.0f; v0 = 0.0f; u1 = 1.0f; v1 = 1.0f;
+            dw = static_cast<float>(sp.width)  * obj.scale_x;
+            dh = static_cast<float>(sp.height) * obj.scale_y;
+        }
+        r->set_texture(e, sp.texture);
+        QuadParams q{ ox, oy, dw, dh, u0,v0,u1,v1,
+                      1.0f,1.0f,1.0f, obj.alpha,
+                      obj.rotation, obj.flip_h, obj.flip_v };
+        r->push_quad(e, q);
+    } else {
+        float cr, cg, cb;
+        _unpack_color(obj.color, &cr, &cg, &cb);
+        const float dw = static_cast<float>(obj.width)  * obj.scale_x;
+        const float dh = static_cast<float>(obj.height) * obj.scale_y;
+        r->set_texture(e, e->white_tex);
+        QuadParams q{ ox, oy, dw, dh, 0,0,1,1,
+                      cr, cg, cb, obj.alpha, 0, 0, 0 };
+        r->push_quad(e, q);
+    }
+}
+
 void engine_draw(Engine *e)
 {
     IRenderer *r = RENDERER(e);
     r->camera_push(e);
 
-    for (int i = 0; i < e->object_count; ++i) {
-        const GameObject &obj = e->objects[i];
-        if (!obj.active) continue;
+    /* Constrói índice de ordenação por (layer, z_order, índice original).
+     * Usa insertion sort — rápido para N pequeno (ENGINE_MAX_OBJECTS ≤ 256)
+     * e estável, preservando a ordem de criação como desempate. */
+    int order[ENGINE_MAX_OBJECTS];
+    int n = 0;
+    for (int i = 0; i < e->object_count; ++i)
+        if (e->objects[i].active) order[n++] = i;
 
-        const float ox = static_cast<float>(obj.x);
-        const float oy = static_cast<float>(obj.y);
-
-        if (_sid_valid(e, obj.sprite_id)) {
-            const SpriteData &sp = e->sprites[obj.sprite_id];
-            if (!sp.loaded) continue;
-
-            float u0, v0, u1, v1, dw, dh;
-            if (obj.use_tile) {
-                const int px = obj.tile_x * obj.tile_w;
-                const int py = obj.tile_y * obj.tile_h;
-                _uv_for_tile(&sp, px, py, obj.tile_w, obj.tile_h, &u0,&v0,&u1,&v1);
-                dw = static_cast<float>(obj.tile_w) * obj.scale_x;
-                dh = static_cast<float>(obj.tile_h) * obj.scale_y;
-            } else {
-                u0 = 0.0f; v0 = 0.0f; u1 = 1.0f; v1 = 1.0f;
-                dw = static_cast<float>(sp.width)  * obj.scale_x;
-                dh = static_cast<float>(sp.height) * obj.scale_y;
-            }
-            r->set_texture(e, sp.texture);
-            QuadParams q{ ox, oy, dw, dh, u0,v0,u1,v1,
-                          1.0f,1.0f,1.0f, obj.alpha,
-                          obj.rotation, obj.flip_h, obj.flip_v };
-            r->push_quad(e, q);
-        } else {
-            float cr, cg, cb;
-            _unpack_color(obj.color, &cr, &cg, &cb);
-            const float dw = static_cast<float>(obj.width)  * obj.scale_x;
-            const float dh = static_cast<float>(obj.height) * obj.scale_y;
-            r->set_texture(e, e->white_tex);
-            QuadParams q{ ox, oy, dw, dh, 0,0,1,1,
-                          cr, cg, cb, obj.alpha, 0, 0, 0 };
-            r->push_quad(e, q);
+    /* Insertion sort estável por (layer, z_order) */
+    for (int i = 1; i < n; ++i) {
+        const int key = order[i];
+        const int kl  = e->objects[key].layer;
+        const int kz  = e->objects[key].z_order;
+        int j = i - 1;
+        while (j >= 0 &&
+               (e->objects[order[j]].layer > kl ||
+               (e->objects[order[j]].layer == kl && e->objects[order[j]].z_order > kz)))
+        {
+            order[j + 1] = order[j];
+            --j;
         }
+        order[j + 1] = key;
     }
+
+    for (int i = 0; i < n; ++i)
+        _draw_object(e, r, order[i]);
+
+    r->flush(e);
+    r->camera_pop(e);
+}
+
+/* engine_draw_layer() — desenha apenas objetos com layer == target_layer.
+ * Útil para intercalar objetos entre camadas do mapa sem chamar engine_draw(). */
+void engine_draw_layer(Engine *e, int target_layer)
+{
+    IRenderer *r = RENDERER(e);
+    r->camera_push(e);
+
+    int order[ENGINE_MAX_OBJECTS];
+    int n = 0;
+    for (int i = 0; i < e->object_count; ++i)
+        if (e->objects[i].active && e->objects[i].layer == target_layer)
+            order[n++] = i;
+
+    for (int i = 1; i < n; ++i) {
+        const int key = order[i];
+        const int kz  = e->objects[key].z_order;
+        int j = i - 1;
+        while (j >= 0 && e->objects[order[j]].z_order > kz) {
+            order[j + 1] = order[j];
+            --j;
+        }
+        order[j + 1] = key;
+    }
+
+    for (int i = 0; i < n; ++i)
+        _draw_object(e, r, order[i]);
 
     r->flush(e);
     r->camera_pop(e);

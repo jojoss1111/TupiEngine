@@ -314,6 +314,7 @@ void   engine_set_background(Engine *e, int r, int g, int b);
 void   engine_poll_events(Engine *e);
 void   engine_clear(Engine *e);
 void   engine_draw(Engine *e);
+void   engine_draw_layer(Engine *e, int target_layer);
 void   engine_flush(Engine *e);
 void   engine_present(Engine *e);
 void   engine_cap_fps(Engine *e, int fps_target);

@@ -1,6 +1,5 @@
+//Engine.hpp — Cabeçalho principal da engine 2D.
 /*
- * Engine.hpp — Cabeçalho principal da engine 2D.
- *
  * Define todas as estruturas de dados (POD/C-compatible), constantes,
  * a struct Engine que concentra o estado global do jogo, a interface
  * abstrata IRenderer e a API pública exposta via extern "C".
