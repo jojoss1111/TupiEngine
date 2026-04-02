@@ -1,3 +1,4 @@
+#LUAJIT_INC = /usr/include/luajit-2.1
 CXX      = g++
 CXXFLAGS = -O2 -fPIC -Wall -Wextra -std=c++17
 
@@ -41,10 +42,9 @@ MINIAUDIO = src/miniaudio.h
 # Carregamento JSON: src/cJSON.c (single-header, sem dependência externa)
 # =============================================================================
 LIB_MAPA       = libmapa.so
-SRC_MAPA       = src/mapa.cpp src/cJSON.c
+SRC_MAPA       = src/mapa.cpp
 HEADER_MAPA    = src/mapa.hpp
-CJSON          = src/cJSON.h src/cJSON.c
-LIBS_MAPA      = -llua -lm -L. -lengine
+LIBS_MAPA      = -llua -lm -L. -lengine -Wl,-rpath,.
 
 # =============================================================================
 # Cores
@@ -73,11 +73,10 @@ $(LIB): $(SRC) $(HEADER) $(MINIAUDIO)
 # -----------------------------------------------------------------------------
 # Compilação do sistema de mapas
 # -----------------------------------------------------------------------------
-$(LIB_MAPA): $(SRC_MAPA) $(HEADER_MAPA) $(CJSON) $(LIB)
+$(LIB_MAPA): $(SRC_MAPA) $(HEADER_MAPA) $(LIB)
 	@echo "$(YELLOW)→ Compilando $(LIB_MAPA)...$(NC)"
 	$(CXX) $(CXXFLAGS) $(DEFINES) $(LDFLAGS) \
-	    -I$(LUAJIT_INC) \
-	    -o $@ $(SRC_MAPA) $(LIBS_MAPA)
+		-o $@ $(SRC_MAPA) $(LIBS_MAPA)
 	@echo "$(GREEN)✓ $(LIB_MAPA) compilado com sucesso!$(NC)"
 
 mapa: $(LIB_MAPA)
@@ -90,17 +89,6 @@ $(MINIAUDIO):
 	curl -fsSL https://raw.githubusercontent.com/mackron/miniaudio/master/miniaudio.h \
 	     -o $(MINIAUDIO)
 	@echo "$(GREEN)✓ miniaudio.h pronto$(NC)"
-
-# -----------------------------------------------------------------------------
-# Download automático do cJSON
-# -----------------------------------------------------------------------------
-$(CJSON):
-	@echo "→ Baixando cJSON..."
-	curl -fsSL https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.h \
-	     -o src/cJSON.h
-	curl -fsSL https://raw.githubusercontent.com/DaveGamble/cJSON/master/cJSON.c \
-	     -o src/cJSON.c
-	@echo "$(GREEN)✓ cJSON pronto$(NC)"
 
 # -----------------------------------------------------------------------------
 # Execução
