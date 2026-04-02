@@ -1,4 +1,5 @@
 -- engine.lua 
+
 local ffi = require("engineffi")
 local lib  = ffi.load("./libengine.so", true)   -- carrega a biblioteca C
 local C    = ffi.C                               -- acessa símbolos globais (fov, etc.)
@@ -1271,6 +1272,151 @@ end
 -- Retorna true se a grade está ativa.
 function E:sgrid_ativo()
     return self._e.sgrid.enabled ~= 0
+end
+
+
+-- =============================================================================
+-- MAPA DE TILES
+--
+-- Fluxo simples para iniciantes:
+--
+--   local mapa = engine:carregar_mapa("fase1.lua")
+--   -- no loop:
+--   engine:desenhar_mapa(mapa)
+--   if engine:colide_mapa(mapa, obj_player) then ... end
+--
+-- O arquivo .lua de mapa usa o módulo mapa.lua e deve terminar com return m:build()
+-- =============================================================================
+
+--[[
+    :carregar_mapa(caminho)
+    Carrega um arquivo .lua de mapa e retorna o mapa pronto para uso.
+    O arquivo deve terminar com: return m:build()
+
+    Exemplo:
+        local mapa = engine:carregar_mapa("fase1.lua")
+        local mapa = engine:carregar_mapa("mapas/fazenda.lua")
+]]
+function E:carregar_mapa(caminho)
+    local fn, err = loadfile(caminho)
+    if not fn then
+        error("[carregar_mapa] Não consegui abrir '" .. caminho .. "': " .. tostring(err))
+    end
+    local dados = fn()
+    if type(dados) ~= "table" then
+        error("[carregar_mapa] '" .. caminho .. "' deve retornar m:build()")
+    end
+
+    -- Carrega o sprite atlas definido no mapa
+    if dados.sprite_atlas then
+        dados._atlas_sid = self:carregar_sprite(dados.sprite_atlas)
+    else
+        dados._atlas_sid = -1
+    end
+
+    -- Monta tabela de colisão [lin][col] = true — feito UMA vez ao carregar
+    local COLISOR = 1   -- MAPA_FLAG_COLISOR = bit 0
+    local col_map = {}
+    for _, camada in ipairs(dados.camadas or {}) do
+        if camada.visivel ~= false then
+            for _, tile in ipairs(camada.tiles or {}) do
+                if tile.flags and bit.band(tile.flags, COLISOR) ~= 0 then
+                    if not col_map[tile.lin] then col_map[tile.lin] = {} end
+                    col_map[tile.lin][tile.col] = true
+                end
+            end
+        end
+    end
+    dados._colisores = col_map
+
+    -- Pré-calcula lista de pixels para renderizar — feito UMA vez ao carregar
+    local tw = dados.tile_w or 16
+    local th = dados.tile_h or 16
+    local render = {}
+    for _, camada in ipairs(dados.camadas or {}) do
+        if camada.visivel ~= false then
+            for _, tile in ipairs(camada.tiles or {}) do
+                render[#render + 1] = {
+                    px = tile.col        * tw,
+                    py = tile.lin        * th,
+                    sx = tile.sprite_col * tw,
+                    sy = tile.sprite_lin * th,
+                }
+            end
+        end
+    end
+    dados._render = render
+    dados._tile_w = tw
+    dados._tile_h = th
+
+    return dados
+end
+
+--[[
+    :desenhar_mapa(mapa)
+    Desenha todos os tiles do mapa. Chame no loop ANTES de engine:desenhar().
+
+    Exemplo:
+        engine:desenhar_mapa(mapa)
+        engine:desenhar()
+]]
+function E:desenhar_mapa(mapa)
+    local sid = mapa._atlas_sid
+    local tw  = mapa._tile_w
+    local th  = mapa._tile_h
+    if not sid or sid < 0 then return end
+    for _, t in ipairs(mapa._render) do
+        lib.engine_draw_sprite_part(self._e, sid, t.px, t.py, t.sx, t.sy, tw, th)
+    end
+end
+
+--[[
+    :colide_mapa(mapa, obj_id)
+    Retorna true se o objeto está colidindo com um tile sólido do mapa.
+    Usa a hitbox do objeto automaticamente.
+
+    Exemplo:
+        if engine:colide_mapa(mapa, jogador) then
+            engine:mover(jogador, -dx, -dy)
+        end
+]]
+function E:colide_mapa(mapa, oid)
+    local ox = ffi.new("int[1]")
+    local oy = ffi.new("int[1]")
+    lib.engine_get_object_pos(self._e, oid, ox, oy)
+
+    -- Dimensões da hitbox do objeto
+    local obj = self._e.objects[oid]
+    local hox, hoy, hw, hh
+    if obj.hitbox.enabled ~= 0 then
+        hox = obj.hitbox.offset_x
+        hoy = obj.hitbox.offset_y
+        hw  = obj.hitbox.width
+        hh  = obj.hitbox.height
+    else
+        hox = 0
+        hoy = 0
+        hw  = obj.tile_w > 0 and obj.tile_w or obj.width
+        hh  = obj.tile_h > 0 and obj.tile_h or obj.height
+    end
+
+    local x0 = ox[0] + hox
+    local y0 = oy[0] + hoy
+    local x1 = x0 + hw - 1
+    local y1 = y0 + hh - 1
+
+    local tw  = mapa._tile_w
+    local th  = mapa._tile_h
+    local col = mapa._colisores
+
+    local function solido(px, py)
+        local c = math.floor(px / tw)
+        local l = math.floor(py / th)
+        return col[l] ~= nil and col[l][c] == true
+    end
+
+    return solido(x0, y0) or solido(x1, y0)
+        or solido(x0, y1) or solido(x1, y1)
 end
 
 
