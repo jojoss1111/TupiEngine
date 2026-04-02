@@ -2,10 +2,17 @@
  * mapa.cpp — Implementação do sistema de mapas 2D.
  *
  * Responsabilidades:
- *   - Carregar mapas de JSON (via parser minimalista) ou de Lua (via lua_State)
+ *   - Carregar mapas via Lua (lua_State) a partir de tabela MapData
  *   - Renderizar camadas de tiles usando engine_draw_sprite_part()
  *   - Detectar colisão AABB com tiles sólidos
  *   - Processar triggers de proximidade (baú, porta, NPC, etc.)
+ *
+ * Flags de tile aceitam bitmask numérico direto do Lua (uint8_t) OU
+ * tabela de strings legíveis — ambos são suportados por _parse_flags_lua().
+ *
+ * Animação de tiles funciona por deslocamento de tile_col no atlas (a linha
+ * fica fixa). Isso é compatível com qualquer tileset clássico 2D sem precisar
+ * de múltiplos sprite_ids pré-carregados.
  *
  * O Lua NÃO renderiza nada — apenas descreve a estrutura do mapa.
  * Todo o rendering é feito aqui em C++.
@@ -13,7 +20,6 @@
  * Dependências externas:
  *   - Engine.hpp / libengine.so   → renderização e sprites
  *   - lua.hpp (LuaJIT)            → parser do formato .lua
- *   - cJSON (single-header)       → parser do formato .json
  */
 
 #include "mapa.hpp"
@@ -29,12 +35,6 @@ extern "C" {
 #include <lauxlib.h>
 #include <lualib.h>
 }
-
-/* =============================================================================
- * cJSON — parser JSON single-header (copie cJSON.h/.c ao lado deste arquivo)
- * https://github.com/DaveGamble/cJSON
- * ============================================================================= */
-#include "cJSON.h"
 
 /* =============================================================================
  * Utilitários internos
@@ -79,216 +79,6 @@ void mapa_destruir(MapaDados *m)
 }
 
 /* =============================================================================
- * Loader JSON
- *
- * Formato esperado (exemplo em mapa.json):
- * {
- *   "largura": 20, "altura": 15,
- *   "tile_w": 16,  "tile_h": 16,
- *   "sprite_atlas": "assets/tileset.png",
- *   "camadas": [
- *     {
- *       "nome": "chao", "z_order": 0, "visivel": true,
- *       "tiles": [
- *         { "col": 0, "lin": 0, "sprite_col": 1, "sprite_lin": 0,
- *           "flags": ["colisor"] },
- *         ...
- *       ]
- *     }
- *   ],
- *   "objetos": [
- *     { "id": 1, "tipo": "bau", "col": 5, "lin": 3, "raio": 1.5,
- *       "props": { "item": "espada", "quantidade": "1" } }
- *   ]
- * }
- * ============================================================================= */
-
-static uint8_t _parse_flags_json(cJSON *arr)
-{
-    uint8_t f = 0;
-    if (!arr || !cJSON_IsArray(arr)) return f;
-    cJSON *item = NULL;
-    cJSON_ArrayForEach(item, arr) {
-        if (!cJSON_IsString(item)) continue;
-        const char *s = item->valuestring;
-        if (strcmp(s, "colisor") == 0)  f |= MAPA_FLAG_COLISOR;
-        if (strcmp(s, "trigger") == 0)  f |= MAPA_FLAG_TRIGGER;
-        if (strcmp(s, "agua")    == 0)  f |= MAPA_FLAG_AGUA;
-        if (strcmp(s, "escada")  == 0)  f |= MAPA_FLAG_ESCADA;
-        if (strcmp(s, "sombra")  == 0)  f |= MAPA_FLAG_SOMBRA;
-        if (strcmp(s, "animado") == 0)  f |= MAPA_FLAG_ANIMADO;
-    }
-    return f;
-}
-
-static int _parse_tipo_objeto(const char *s)
-{
-    if (!s) return TRIGGER_TIPO_GENERICO;
-    if (strcmp(s, "bau")       == 0) return TRIGGER_TIPO_BAU;
-    if (strcmp(s, "porta")     == 0) return TRIGGER_TIPO_PORTA;
-    if (strcmp(s, "npc")       == 0) return TRIGGER_TIPO_NPC;
-    if (strcmp(s, "teleporte") == 0) return TRIGGER_TIPO_TELEPORTE;
-    if (strcmp(s, "script")    == 0) return TRIGGER_TIPO_SCRIPT;
-    return TRIGGER_TIPO_GENERICO;
-}
-
-int mapa_carregar_json(MapaDados *m, Engine *e, const char *caminho)
-{
-    _limpar_mapa(m);
-
-    /* Lê arquivo inteiro */
-    FILE *f = fopen(caminho, "rb");
-    if (!f) {
-        fprintf(stderr, "[mapa] Erro: não foi possível abrir '%s'\n", caminho);
-        return 0;
-    }
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    rewind(f);
-    char *buf = (char *)malloc(sz + 1);
-    if (!buf) { fclose(f); return 0; }
-    fread(buf, 1, sz, f);
-    buf[sz] = '\0';
-    fclose(f);
-
-    cJSON *root = cJSON_Parse(buf);
-    free(buf);
-    if (!root) {
-        fprintf(stderr, "[mapa] Erro ao parsear JSON: %s\n", cJSON_GetErrorPtr());
-        return 0;
-    }
-
-    /* Dimensões */
-    m->largura = cJSON_GetObjectItem(root, "largura") ?
-                 cJSON_GetObjectItem(root, "largura")->valueint : 10;
-    m->altura  = cJSON_GetObjectItem(root, "altura")  ?
-                 cJSON_GetObjectItem(root, "altura")->valueint  : 10;
-    m->tile_w  = cJSON_GetObjectItem(root, "tile_w")  ?
-                 cJSON_GetObjectItem(root, "tile_w")->valueint  : 16;
-    m->tile_h  = cJSON_GetObjectItem(root, "tile_h")  ?
-                 cJSON_GetObjectItem(root, "tile_h")->valueint  : 16;
-
-    /* Atlas principal */
-    cJSON *atlas = cJSON_GetObjectItem(root, "sprite_atlas");
-    if (atlas && cJSON_IsString(atlas)) {
-        m->sprite_atlas = engine_load_sprite(e, atlas->valuestring);
-    }
-
-    /* Camadas */
-    cJSON *camadas = cJSON_GetObjectItem(root, "camadas");
-    if (camadas && cJSON_IsArray(camadas)) {
-        cJSON *cam = NULL;
-        cJSON_ArrayForEach(cam, camadas) {
-            if (m->n_camadas >= MAPA_MAX_CAMADAS) break;
-            MapaCamada *c = &m->camadas[m->n_camadas++];
-
-            cJSON *nome = cJSON_GetObjectItem(cam, "nome");
-            if (nome && cJSON_IsString(nome))
-                strncpy(c->nome, nome->valuestring, 31);
-
-            c->visivel = 1;
-            cJSON *vis = cJSON_GetObjectItem(cam, "visivel");
-            if (vis) c->visivel = cJSON_IsTrue(vis) ? 1 : 0;
-
-            cJSON *z = cJSON_GetObjectItem(cam, "z_order");
-            if (z) c->z_order = z->valueint;
-
-            cJSON *tiles = cJSON_GetObjectItem(cam, "tiles");
-            if (!tiles || !cJSON_IsArray(tiles)) continue;
-
-            cJSON *t = NULL;
-            cJSON_ArrayForEach(t, tiles) {
-                int col = cJSON_GetObjectItem(t, "col") ?
-                          cJSON_GetObjectItem(t, "col")->valueint : 0;
-                int lin = cJSON_GetObjectItem(t, "lin") ?
-                          cJSON_GetObjectItem(t, "lin")->valueint : 0;
-                if (col < 0 || col >= m->largura ||
-                    lin < 0 || lin >= m->altura) continue;
-
-                MapaTile *tile = &c->tiles[lin * m->largura + col];
-
-                /* sprite customizado ou usa atlas */
-                cJSON *spr = cJSON_GetObjectItem(t, "sprite");
-                if (spr && cJSON_IsString(spr))
-                    tile->sprite_id = engine_load_sprite(e, spr->valuestring);
-                else
-                    tile->sprite_id = m->sprite_atlas;
-
-                cJSON *sc = cJSON_GetObjectItem(t, "sprite_col");
-                cJSON *sl = cJSON_GetObjectItem(t, "sprite_lin");
-                tile->tile_col = sc ? sc->valueint : 0;
-                tile->tile_lin = sl ? sl->valueint : 0;
-                tile->flags    = _parse_flags_json(cJSON_GetObjectItem(t, "flags"));
-
-                /* Animação */
-                cJSON *afps = cJSON_GetObjectItem(t, "anim_fps");
-                if (afps) {
-                    tile->anim_fps = (float)afps->valuedouble;
-                    tile->flags |= MAPA_FLAG_ANIMADO;
-                }
-                cJSON *af = cJSON_GetObjectItem(t, "anim_frames");
-                if (af && cJSON_IsArray(af)) {
-                    cJSON *fr = NULL;
-                    int fi = 0;
-                    cJSON_ArrayForEach(fr, af) {
-                        if (fi >= 8) break;
-                        tile->anim_frames[fi++] = fr->valueint;
-                    }
-                    tile->n_frames = fi;
-                }
-            }
-        }
-    }
-
-    /* Objetos */
-    cJSON *objs = cJSON_GetObjectItem(root, "objetos");
-    if (objs && cJSON_IsArray(objs)) {
-        cJSON *obj = NULL;
-        cJSON_ArrayForEach(obj, objs) {
-            if (m->n_objetos >= MAPA_MAX_OBJETOS) break;
-            MapaObjeto *o = &m->objetos[m->n_objetos++];
-
-            cJSON *id = cJSON_GetObjectItem(obj, "id");
-            o->id = id ? id->valueint : m->n_objetos;
-
-            cJSON *tipo = cJSON_GetObjectItem(obj, "tipo");
-            o->tipo = _parse_tipo_objeto(tipo ? tipo->valuestring : NULL);
-
-            cJSON *col  = cJSON_GetObjectItem(obj, "col");
-            cJSON *lin  = cJSON_GetObjectItem(obj, "lin");
-            o->col = col ? col->valueint : 0;
-            o->lin = lin ? lin->valueint : 0;
-
-            cJSON *raio = cJSON_GetObjectItem(obj, "raio");
-            o->raio = raio ? (float)raio->valuedouble : 1.5f;
-            o->ativo = 1;
-
-            cJSON *spr = cJSON_GetObjectItem(obj, "sprite");
-            o->sprite_id = (spr && cJSON_IsString(spr)) ?
-                           engine_load_sprite(e, spr->valuestring) : -1;
-
-            /* Props extras */
-            cJSON *props = cJSON_GetObjectItem(obj, "props");
-            if (props && cJSON_IsObject(props)) {
-                cJSON *p = NULL;
-                cJSON_ArrayForEach(p, props) {
-                    if (o->n_props >= MAPA_MAX_PROPRIEDADES) break;
-                    strncpy(o->props[o->n_props][0], p->string,        63);
-                    strncpy(o->props[o->n_props][1], p->valuestring,   63);
-                    o->n_props++;
-                }
-            }
-        }
-    }
-
-    cJSON_Delete(root);
-    m->carregado = 1;
-    printf("[mapa] JSON carregado: %dx%d tiles, %d camadas, %d objetos\n",
-           m->largura, m->altura, m->n_camadas, m->n_objetos);
-    return 1;
-}
-
-/* =============================================================================
  * Loader Lua
  *
  * O arquivo .lua deve retornar uma tabela MapData com o mesmo esquema.
@@ -325,9 +115,38 @@ static int _lua_bool(lua_State *L, const char *campo, int def)
     return v;
 }
 
+/* Mapeia string de tipo para TriggerTipo */
+static int _parse_tipo_objeto(const char *s)
+{
+    if (!s) return TRIGGER_TIPO_GENERICO;
+    if (strcmp(s, "bau")       == 0) return TRIGGER_TIPO_BAU;
+    if (strcmp(s, "porta")     == 0) return TRIGGER_TIPO_PORTA;
+    if (strcmp(s, "npc")       == 0) return TRIGGER_TIPO_NPC;
+    if (strcmp(s, "teleporte") == 0) return TRIGGER_TIPO_TELEPORTE;
+    if (strcmp(s, "script")    == 0) return TRIGGER_TIPO_SCRIPT;
+    return TRIGGER_TIPO_GENERICO;
+}
+
+/*
+ * _parse_flags_lua — aceita dois formatos no campo "flags" da tabela Lua:
+ *
+ *   1. Bitmask numérico (rápido, sem strcmp):
+ *        flags = 0x01          -- MAPA_FLAG_COLISOR
+ *        flags = 0x01 | 0x10   -- MAPA_FLAG_COLISOR | MAPA_FLAG_SOMBRA
+ *
+ *   2. Tabela de strings (legível, compatível com código legado):
+ *        flags = {"colisor", "sombra"}
+ *
+ * Ambas as formas podem ser usadas no mesmo mapa sem problema.
+ * Espera o valor de "flags" já no topo da stack (lua_getfield já chamado).
+ */
 static uint8_t _parse_flags_lua(lua_State *L)
 {
-    /* Espera tabela de strings no topo da stack */
+    /* Formato 1: número direto — path rápido, sem iteração */
+    if (lua_isnumber(L, -1))
+        return (uint8_t)(int)lua_tonumber(L, -1);
+
+    /* Formato 2: tabela de strings — compatibilidade legada */
     uint8_t f = 0;
     if (!lua_istable(L, -1)) return f;
     lua_pushnil(L);
@@ -423,7 +242,7 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                     tile->tile_lin = _lua_int  (L, "sprite_lin", 0);
                     tile->anim_fps = _lua_float(L, "anim_fps",   0.f);
 
-                    /* flags */
+                    /* flags — aceita número (bitmask) ou tabela de strings */
                     lua_getfield(L, -1, "flags");
                     tile->flags = _parse_flags_lua(L);
                     lua_pop(L, 1);
@@ -431,18 +250,26 @@ int mapa_carregar_lua(MapaDados *m, Engine *e, const char *caminho)
                     if (tile->anim_fps > 0.f)
                         tile->flags |= MAPA_FLAG_ANIMADO;
 
-                    /* frames de animação */
-                    lua_getfield(L, -1, "anim_frames");
+                    /*
+                     * anim_cols — sequência de tile_col para cada frame.
+                     * A linha (tile_lin) permanece fixa durante a animação,
+                     * o que é o padrão de tilesets 2D clássicos.
+                     *
+                     * Exemplo Lua:
+                     *   chao:tile_animado(2, 5, {0,1,2,3}, 8)
+                     *   -- frames nas colunas 0,1,2,3 da mesma linha
+                     */
+                    lua_getfield(L, -1, "anim_cols");
                     if (lua_istable(L, -1)) {
                         int nf = (int)lua_objlen(L, -1);
                         for (int fi = 1; fi <= nf && fi <= 8; fi++) {
                             lua_rawgeti(L, -1, fi);
-                            tile->anim_frames[fi-1] = (int)lua_tonumber(L, -1);
+                            tile->anim_cols[fi-1] = (int)lua_tonumber(L, -1);
                             lua_pop(L, 1);
                         }
                         tile->n_frames = (nf > 8) ? 8 : nf;
                     }
-                    lua_pop(L, 1);  /* anim_frames */
+                    lua_pop(L, 1);  /* anim_cols */
 
                     lua_pop(L, 1);  /* tile[ti] */
                 }
@@ -523,13 +350,16 @@ void mapa_desenhar_camada(MapaDados *m, Engine *e, int ci)
             int sx = t->tile_col * m->tile_w;
             int sy = t->tile_lin * m->tile_h;
 
-            /* Tile animado: calcula frame atual */
+            /* Tile animado: desloca tile_col no atlas mantendo tile_lin fixo */
             if ((t->flags & MAPA_FLAG_ANIMADO) && t->n_frames > 0 &&
                 t->anim_fps > 0.f) {
                 double tempo = engine_get_time(e);
-                int frame = (int)(tempo * t->anim_fps) % t->n_frames;
-                int sid = t->anim_frames[frame];
-                engine_draw_sprite_part(e, sid, px, py, 0, 0, m->tile_w, m->tile_h);
+                int frame    = (int)(tempo * t->anim_fps) % t->n_frames;
+                int anim_col = t->anim_cols[frame];
+                sx = anim_col * m->tile_w;
+                /* sy (tile_lin) permanece o mesmo calculado acima */
+                engine_draw_sprite_part(e, t->sprite_id, px, py,
+                                        sx, sy, m->tile_w, m->tile_h);
             } else {
                 engine_draw_sprite_part(e, t->sprite_id, px, py,
                                         sx, sy, m->tile_w, m->tile_h);
@@ -673,4 +503,24 @@ void mapa_set_tile(MapaDados *m, int camada, int col, int lin,
     t->tile_col  = tile_col;
     t->tile_lin  = tile_lin;
     t->flags     = flags;
+}
+
+/*
+ * mapa_set_tile_atlas — variante de mapa_set_tile que usa o atlas principal
+ * do mapa como sprite_id automaticamente. Preferível quando todos os tiles
+ * vêm do mesmo tileset (o caso mais comum ao usar carregar_matriz() no Lua).
+ *
+ * tile_col, tile_lin → coordenadas do tile na grade do atlas (não em pixels).
+ * flags              → bitmask MAPA_FLAG_* (ex: MAPA_FLAG_COLISOR | MAPA_FLAG_SOMBRA).
+ *
+ * Exemplo:
+ *   // coloca tile da coluna 0, linha 1 do atlas na posição (3,2) da camada 0
+ *   mapa_set_tile_atlas(m, 0, 3, 2, 0, 1, MAPA_FLAG_COLISOR);
+ */
+void mapa_set_tile_atlas(MapaDados *m, int camada, int col, int lin,
+                         int tile_col, int tile_lin, uint8_t flags)
+{
+    mapa_set_tile(m, camada, col, lin,
+                  m->sprite_atlas,   /* usa atlas principal automaticamente */
+                  tile_col, tile_lin, flags);
 }

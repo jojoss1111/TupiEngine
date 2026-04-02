@@ -4,12 +4,19 @@
  * Define as estruturas de dados do mapa, flags de comportamento de blocos,
  * e a API pública (extern "C") usada tanto pelo C++ quanto pelo FFI Lua.
  *
- * O sistema suporta dois formatos de carregamento:
- *   - JSON  : via arquivo .json  (campo "layers" com tiles e objetos)
- *   - Lua   : via arquivo .lua   (tabela MapData retornada por loadfile)
+ * Formato de carregamento:
+ *   - Lua : via arquivo .lua (tabela MapData retornada por loadfile)
  *
  * A renderização é feita inteiramente em C++. O Lua apenas descreve
  * quais tiles vão onde e quais propriedades cada bloco possui.
+ *
+ * Flags de tile podem ser passadas como bitmask numérico (uint8_t) diretamente
+ * do Lua, evitando loops de strcmp. Use as constantes MAPA_FLAG_* combinadas
+ * com OR. Exemplo Lua: flags = MAPA_FLAG_COLISOR | MAPA_FLAG_SOMBRA
+ *
+ * Animação de tiles usa deslocamento de tile_col/tile_lin no atlas (sem trocar
+ * sprite_id), o que é compatível com tilesets clássicos 2D. O campo anim_frames
+ * armazena os valores de tile_col sequenciais; anim_lin fixa a linha do atlas.
  */
 
 #ifndef MAPA_HPP
@@ -69,13 +76,14 @@ typedef enum {
 /* =============================================================================
  * Estrutura de um tile individual em uma camada
  *
- * sprite_id  → ID do sprite carregado na engine (-1 = vazio)
- * tile_col   → coluna na spritesheet (para tilemaps com atlas)
- * tile_lin   → linha na spritesheet
- * flags      → combinação de MAPA_FLAG_*
- * anim_fps   → frames por segundo da animação (0 = estático)
- * anim_frames→ lista de sprite_ids para animação (0 = não animado)
- * n_frames   → número de frames na animação
+ * sprite_id    → ID do sprite carregado na engine (-1 = vazio)
+ * tile_col     → coluna inicial na spritesheet
+ * tile_lin     → linha na spritesheet (fixa durante a animação)
+ * flags        → combinação de MAPA_FLAG_* (aceita bitmask numérico direto do Lua)
+ * anim_fps     → frames por segundo da animação (0 = estático)
+ * anim_cols[8] → sequência de tile_col para cada frame da animação
+ *                ex: {0,1,2,3} para 4 frames na mesma linha do atlas
+ * n_frames     → número de frames na animação
  * ============================================================================= */
 typedef struct {
     int     sprite_id;
@@ -83,7 +91,7 @@ typedef struct {
     int     tile_lin;
     uint8_t flags;
     float   anim_fps;
-    int     anim_frames[8];   /* até 8 frames por tile animado                  */
+    int     anim_cols[8];   /* colunas do atlas para cada frame (mesma linha)   */
     int     n_frames;
 } MapaTile;
 
@@ -173,7 +181,6 @@ void mapa_init    (MapaDados *m);
 void mapa_destruir(MapaDados *m);
 
 /* Carregamento */
-int  mapa_carregar_json(MapaDados *m, Engine *e, const char *caminho);
 int  mapa_carregar_lua (MapaDados *m, Engine *e, const char *caminho);
 
 /* Renderização (chamada pelo loop principal) */
@@ -202,6 +209,14 @@ void mapa_centralizar_em(MapaDados *m, Engine *e, int col, int lin);
 /* Modificação em tempo de execução */
 void mapa_set_tile(MapaDados *m, int camada, int col, int lin,
                    int sprite_id, int tile_col, int tile_lin, uint8_t flags);
+
+/*
+ * Variante que usa o atlas principal (m->sprite_atlas) automaticamente.
+ * Preferível quando todos os tiles vêm do mesmo tileset — elimina a
+ * necessidade de passar sprite_id manualmente em cada chamada.
+ */
+void mapa_set_tile_atlas(MapaDados *m, int camada, int col, int lin,
+                         int tile_col, int tile_lin, uint8_t flags);
 
 #ifdef __cplusplus
 }
