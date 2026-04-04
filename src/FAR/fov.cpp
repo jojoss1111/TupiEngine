@@ -64,9 +64,10 @@ static const int OCT_TRANSFORM[8][4] = {
 
 struct Shadow { float start, end; };
 
-/* Slopes inferior e superior do tile (dc, dr) no espaço do octante. */
-static inline float _slope_low (int dc, int dr) { return (float)dr / (float)(dc + 1); }
-static inline float _slope_high(int dc, int dr) { return (float)(dr + 1) / (float)dc; }
+/* Slopes inferior e superior do tile (dc, dr) no espaço do octante.
+ * Ambos usam (dc + 0.5) como denominador para simetria angular. */
+static inline float _slope_low (int dc, int dr) { return (float)dr       / ((float)dc + 0.5f); }
+static inline float _slope_high(int dc, int dr) { return ((float)dr + 1.0f) / ((float)dc - 0.5f > 0 ? (float)dc - 0.5f : 0.5f); }
 
 /* =========================================================================
  * _shadows_insert — insere uma sombra e mescla sobreposições.
@@ -131,45 +132,53 @@ static inline int _shadows_covers(const Shadow *shadows, int count,
  * ========================================================================= */
 static void _fov_octant(FovParams *p, int oct, Shadow *shadows, int *shadow_count)
 {
-    const int *m = OCT_TRANSFORM[oct];
-    const float r2 = (float)(p->radius * p->radius);
+    const int   *m        = OCT_TRANSFORM[oct];
+    const float  r2       = (float)(p->radius * p->radius);
+    const float  r_inv    = 1.0f / (float)p->radius;
+    const int    smooth   = (p->mode == FOV_MODE_SMOOTH);
+    const int    fog_war  = (p->mode == FOV_MODE_FOG_WAR);
+    const int    cols     = p->map_cols;
+    const int    rows     = p->map_rows;
+    const int    oc       = p->origin_col;
+    const int    or_      = p->origin_row;
 
     for (int dc = 1; dc <= p->radius; dc++) {
         /* Anel completamente na sombra: encerra o octante */
-        if (_shadows_covers(shadows, *shadow_count, 0.0f, 1.0f)) break;
+        if (*shadow_count > 0 &&
+            _shadows_covers(shadows, *shadow_count, 0.0f, 1.0f)) break;
 
         for (int dr = 0; dr <= dc; dr++) {
-            int col = p->origin_col + dc*m[0] + dr*m[1];
-            int row = p->origin_row + dc*m[2] + dr*m[3];
+            const int col = oc + dc*m[0] + dr*m[1];
+            const int row = or_ + dc*m[2] + dr*m[3];
 
-            if (col < 0 || col >= p->map_cols) continue;
-            if (row < 0 || row >= p->map_rows) continue;
-            if (_dist2(dc, dr) > r2)           continue;
+            if ((unsigned)col >= (unsigned)cols) continue;  /* col < 0 || col >= cols */
+            if ((unsigned)row >= (unsigned)rows) continue;  /* row < 0 || row >= rows */
 
-            float sl = _slope_low (dc, dr);
-            float sh = _slope_high(dc, dr);
+            const float d2 = _dist2(dc, dr);
+            if (d2 > r2) continue;
 
-            if (!_shadows_covers(shadows, *shadow_count, sl, sh)) {
-                int idx = row * p->map_cols + col;
-                float vis_val;
+            const float sl      = _slope_low (dc, dr);
+            const float sh_val  = _slope_high(dc, dr);
+            const int   covered = _shadows_covers(shadows, *shadow_count, sl, sh_val);
 
-                if (p->mode == FOV_MODE_SMOOTH) {
-                    float dist = sqrtf(_dist2(dc, dr));
-                    vis_val = _fclamp(1.0f - dist / (float)p->radius, 0.0f, 1.0f);
-                } else {
-                    vis_val = ENGINE_FOV_VISIBLE;
-                }
+            if (!covered) {
+                const int   idx     = row * cols + col;
+                const float vis_val = smooth
+                    ? _fclamp(1.0f - sqrtf(d2) * r_inv, 0.0f, 1.0f)
+                    : ENGINE_FOV_VISIBLE;
 
-                /* Fog-of-war: só sobrescreve se o novo valor é maior */
-                if (p->mode == FOV_MODE_FOG_WAR) {
+                if (fog_war) {
                     if (vis_val > p->vis[idx]) p->vis[idx] = vis_val;
                 } else {
                     p->vis[idx] = vis_val;
                 }
             }
 
-            if (p->is_blocking(col, row, p->user_data))
-                _shadows_insert(shadows, shadow_count, sl, sh);
+            /* Só consulta o callback se o tile ainda pode lançar sombra nova */
+            if (!covered || *shadow_count == 0) {
+                if (p->is_blocking(col, row, p->user_data))
+                    _shadows_insert(shadows, shadow_count, sl, sh_val);
+            }
         }
     }
 }

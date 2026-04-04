@@ -64,14 +64,16 @@ end
 function Parallax:adicionar_sprite(caminho, cfg)
     local c      = _normalizar_cfg(cfg)
     c.tipo       = "sprite"
-    local spr    = self._e:carregar_sprite(caminho)
-    if not spr then
+    local sid    = self._e:carregar_sprite(caminho)
+    if not sid or sid < 0 then
         error("Parallax: não foi possível carregar '" .. caminho .. "'")
     end
-    c.sprite_id  = spr._sid
-    local sp     = self._e._e.sprites[c.sprite_id]
-    c.img_w  = sp.width  * c.escala
-    c.img_h  = sp.height * c.escala
+    c.sprite_id  = sid
+    local sp     = self._e._e.sprites[sid]
+    c.src_w      = sp.width           -- cacheado: sem acesso FFI por frame
+    c.src_h      = sp.height
+    c.img_w      = sp.width  * c.escala
+    c.img_h      = sp.height * c.escala
     table.insert(self._camadas, c)
     return #self._camadas
 end
@@ -85,13 +87,15 @@ end
 function Parallax:adicionar_sprite_regiao(caminho, rx, ry, rw, rh, cfg)
     local c      = _normalizar_cfg(cfg)
     c.tipo       = "sprite"
-    local spr    = self._e:criar_sprite(caminho, rx, ry, rw, rh)
-    if not spr then
+    local sid    = self._e:carregar_regiao(caminho, rx, ry, rw, rh)
+    if not sid or sid < 0 then
         error("Parallax: não foi possível carregar região de '" .. caminho .. "'")
     end
-    c.sprite_id  = spr._sid
-    c.img_w  = rw * c.escala
-    c.img_h  = rh * c.escala
+    c.sprite_id  = sid
+    c.src_w      = rw
+    c.src_h      = rh
+    c.img_w      = rw * c.escala
+    c.img_h      = rh * c.escala
     table.insert(self._camadas, c)
     return #self._camadas
 end
@@ -139,6 +143,10 @@ function Parallax:adicionar_tilemap(mapa, linhas, colunas, sid, tw, th, cfg)
     c.th        = th
     c.img_w     = colunas * tw * c.escala
     c.img_h     = linhas  * th * c.escala
+    -- Pré-aloca o buffer C uma única vez (evita alocação por frame)
+    local n     = linhas * colunas
+    c._cbuf     = ffi.new("int[?]", n)
+    for i = 1, n do c._cbuf[i-1] = mapa[i] or 0 end
     table.insert(self._camadas, c)
     return #self._camadas
 end
@@ -182,40 +190,24 @@ end
 local function _desenhar_sprite_tiled(e, c, ox, oy, rw, rh)
     local iw = c.img_w
     local ih = c.img_h
+    local sw = c.src_w   -- cacheado em adicionar_sprite/adicionar_sprite_regiao
+    local sh = c.src_h
 
-    -- Limites de iteração: quantas cópias cobrem a tela
     local x_copies = c.tile_x and math.ceil((rw - ox) / iw) or 1
     local y_copies = c.tile_y and math.ceil((rh - oy) / ih) or 1
 
-    local tr = c.tint_r / 255.0
-    local tg = c.tint_g / 255.0
-    local tb = c.tint_b / 255.0
-
-    local sp = e._e.sprites[c.sprite_id]
-    local sw = sp.width
-    local sh = sp.height
+    local draw = ffi.C.engine_draw_sprite_part_ex
+    local ep   = e._e
 
     for cy = 0, y_copies - 1 do
-        local py = oy + cy * ih
-        -- Clamp vertical se não tile-ar
-        if not c.tile_y then py = 0 end
-
+        local py = c.tile_y and (oy + cy * ih) or 0
         for cx = 0, x_copies - 1 do
-            local px = ox + cx * iw
-            -- Clamp horizontal se não tile-ar
-            if not c.tile_x then px = 0 end
-
-            ffi.C.engine_draw_sprite_part_ex(
-                e._e,
-                c.sprite_id,
-                math.floor(px), math.floor(py),
-                0, 0, sw, sh,
-                c.escala, c.escala,
-                0.0,       -- sem rotação
-                c.alpha,
-                0, 0       -- sem flip
-            )
-
+            local px = c.tile_x and (ox + cx * iw) or 0
+            draw(ep, c.sprite_id,
+                 math.floor(px), math.floor(py),
+                 0, 0, sw, sh,
+                 c.escala, c.escala,
+                 0.0, c.alpha, 0, 0)
             if not c.tile_x then break end
         end
         if not c.tile_y then break end
@@ -236,26 +228,15 @@ local function _desenhar_tilemap_tiled(e, c, ox, oy, rw, rh)
     local x_copies = c.tile_x and math.ceil((rw - ox) / mw) or 1
     local y_copies = c.tile_y and math.ceil((rh - oy) / mh) or 1
 
-    -- Constrói buffer C uma única vez e reutiliza nas passadas
-    local n = c.linhas * c.colunas
-    local buf = ffi.new("int[?]", n)
-    for i = 1, n do buf[i-1] = c.mapa[i] or 0 end
+    local draw = ffi.C.engine_draw_tilemap
+    local ep   = e._e
+    local buf  = c._cbuf   -- buffer pré-alocado em adicionar_tilemap
 
     for cy = 0, y_copies - 1 do
-        local py = math.floor(oy + cy * mh)
-        if not c.tile_y then py = math.floor(oy) end
-
+        local py = math.floor(c.tile_y and (oy + cy * mh) or oy)
         for cx = 0, x_copies - 1 do
-            local px = math.floor(ox + cx * mw)
-            if not c.tile_x then px = math.floor(ox) end
-
-            ffi.C.engine_draw_tilemap(
-                e._e, buf,
-                c.linhas, c.colunas,
-                c.sid, c.tw, c.th,
-                px, py
-            )
-
+            local px = math.floor(c.tile_x and (ox + cx * mw) or ox)
+            draw(ep, buf, c.linhas, c.colunas, c.sid, c.tw, c.th, px, py)
             if not c.tile_x then break end
         end
         if not c.tile_y then break end
