@@ -29,7 +29,7 @@
 #ifndef ENGINE_FOV_HPP
 #define ENGINE_FOV_HPP
 
-#include "Engine.hpp"
+#include "../Engine.hpp"
 
 #ifdef __cplusplus
 extern "C" {
