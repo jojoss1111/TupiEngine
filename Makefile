@@ -178,7 +178,7 @@ ifeq ($(BACKEND),vk)
 
     # shaders_embedded.hpp — SPIR-V pré-compilado (gerado por compile_shaders.sh/.bat)
     SHADERS_EMBEDDED = src/Renderizador/shaders_embedded.hpp
-    ifeq $(HOST_OS),windows)
+    ifeq ($(HOST_OS),windows)
         SHADERS_SCRIPT = compile_shaders.bat
     else
         SHADERS_SCRIPT = compile_shaders.sh
