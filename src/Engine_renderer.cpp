@@ -197,10 +197,10 @@ static void _png_cache_clear()
 
 /* Inclui apenas os backends habilitados em tempo de compilação */
 #ifdef ENGINE_BACKEND_VK
-#  include "RendererVK.hpp"
+#  include "Renderizador/RendererVK.hpp"
 #endif
 #ifdef ENGINE_BACKEND_DX11
-#  include "RendererDX11.hpp"
+#  include "Renderizador/RendererDX11.hpp"
 #endif
 
 IRenderer *engine_create_renderer(int backend_id)
