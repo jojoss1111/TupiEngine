@@ -4,18 +4,12 @@
 :: Compila os shaders GLSL padrao do backend Vulkan para SPIR-V e gera
 :: o header C++ "shaders_embedded.hpp" com os arrays embutidos no codigo.
 ::
-:: Equivalente ao compile_shaders.sh, mas para Windows nativo (sem bash).
-::
 :: Dependencia: glslc  (vem com o Vulkan SDK do LunarG)
 ::   Instale em: https://vulkan.lunarg.com
 ::   O glslc.exe fica em:  %VULKAN_SDK%\Bin\glslc.exe
-::   Apos instalar, reabra o terminal para a variavel VULKAN_SDK ser detectada.
 ::
 :: Uso:
 ::   compile_shaders.bat
-::
-:: O arquivo gerado (shaders_embedded.hpp) deve ser commitado no repositorio
-:: para que outros contribuidores nao precisem rodar este script.
 
 setlocal enabledelayedexpansion
 
@@ -23,27 +17,25 @@ setlocal enabledelayedexpansion
 :: Diretorio do script e caminho de saida
 :: ---------------------------------------------------------------------------
 set "SCRIPT_DIR=%~dp0"
-:: Remove a barra final do caminho
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
 set "OUT_HEADER=%SCRIPT_DIR%\src\Renderizador\shaders_embedded.hpp"
 set "TMP_DIR=%TEMP%\compile_shaders_%RANDOM%"
-
 mkdir "%TMP_DIR%" 2>nul
 
 :: ---------------------------------------------------------------------------
-:: Localiza o glslc
+:: Localiza o glslc — testa varios lugares possiveis
 :: ---------------------------------------------------------------------------
 set "GLSLC="
 
-:: 1. Tenta o PATH do sistema
-where glslc >nul 2>&1
-if %errorlevel%==0 (
-    set "GLSLC=glslc"
+:: 1. glslc ja esta no PATH
+for %%X in (glslc.exe) do set "GLSLC_TEST=%%~$PATH:X"
+if defined GLSLC_TEST (
+    set "GLSLC=%GLSLC_TEST%"
     goto :found_glslc
 )
 
-:: 2. Tenta a variavel de ambiente VULKAN_SDK (definida pelo instalador LunarG)
+:: 2. Variavel VULKAN_SDK definida pelo instalador LunarG
 if defined VULKAN_SDK (
     if exist "%VULKAN_SDK%\Bin\glslc.exe" (
         set "GLSLC=%VULKAN_SDK%\Bin\glslc.exe"
@@ -51,10 +43,9 @@ if defined VULKAN_SDK (
     )
 )
 
-:: 3. Tenta o diretorio padrao do LunarG SDK em C:\VulkanSDK
-:: Pega a versao mais recente listada no diretorio
+:: 3. Procura em C:\VulkanSDK\<qualquer versao>\Bin\glslc.exe
 if exist "C:\VulkanSDK\" (
-    for /f "delims=" %%V in ('dir /b /ad /o-n "C:\VulkanSDK" 2^>nul') do (
+    for /f "delims=" %%V in ('dir /b /ad /o-n "C:\VulkanSDK\" 2^>nul') do (
         if exist "C:\VulkanSDK\%%V\Bin\glslc.exe" (
             set "GLSLC=C:\VulkanSDK\%%V\Bin\glslc.exe"
             goto :found_glslc
@@ -62,17 +53,67 @@ if exist "C:\VulkanSDK\" (
     )
 )
 
-:: Nao encontrou
+:: 4. Procura em outros drives comuns (D:, E:, F:)
+for %%D in (D E F) do (
+    if exist "%%D:\VulkanSDK\" (
+        for /f "delims=" %%V in ('dir /b /ad /o-n "%%D:\VulkanSDK\" 2^>nul') do (
+            if exist "%%D:\VulkanSDK\%%V\Bin\glslc.exe" (
+                set "GLSLC=%%D:\VulkanSDK\%%V\Bin\glslc.exe"
+                goto :found_glslc
+            )
+        )
+    )
+)
+
+:: 5. Procura no MSYS2/MinGW
+for %%P in (C:\msys64\mingw64\bin\glslc.exe C:\msys2\mingw64\bin\glslc.exe) do (
+    if exist "%%P" (
+        set "GLSLC=%%P"
+        goto :found_glslc
+    )
+)
+
+:: Nenhum encontrado — mostra diagnostico detalhado
 echo.
-echo ERRO: 'glslc' nao encontrado.
-echo   Instale o Vulkan SDK em: https://vulkan.lunarg.com
-echo   Apos instalar, reabra o terminal e tente novamente.
+echo ============================================================
+echo  ERRO: glslc.exe nao encontrado.
+echo ============================================================
+echo.
+echo  O script procurou em:
+echo    - PATH do sistema
+if defined VULKAN_SDK (
+    echo    - VULKAN_SDK = %VULKAN_SDK%  ^(definido, mas glslc.exe nao encontrado nessa pasta^)
+) else (
+    echo    - VULKAN_SDK = ^(variavel NAO definida no sistema^)
+)
+echo    - C:\VulkanSDK\*\Bin\glslc.exe
+echo    - D: E: F:\VulkanSDK\*\Bin\glslc.exe
+echo    - C:\msys64\mingw64\bin\glslc.exe
+echo.
+echo  Solucoes:
+echo.
+echo  1^) Instale o Vulkan SDK em: https://vulkan.lunarg.com
+echo     Apos instalar, FECHE e REABRA este terminal e rode novamente.
+echo.
+echo  2^) Se ja instalou e ainda da erro, rode este comando para ver
+echo     se a pasta existe:
+echo       dir C:\VulkanSDK
+echo     Se existir, defina manualmente antes de rodar o .bat:
+echo       set VULKAN_SDK=C:\VulkanSDK\^<sua-versao^>
 echo.
 goto :cleanup_error
 
 :found_glslc
 echo Usando glslc: %GLSLC%
 echo.
+
+:: Testa se o glslc realmente executa
+"%GLSLC%" --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERRO: glslc encontrado em "%GLSLC%" mas falhou ao executar.
+    echo   Tente reinstalar o Vulkan SDK.
+    goto :cleanup_error
+)
 
 :: ---------------------------------------------------------------------------
 :: Escreve quad.vert
@@ -132,14 +173,11 @@ if %errorlevel% neq 0 (
 
 :: ---------------------------------------------------------------------------
 :: Converte .spv -> array uint32_t C++ via PowerShell embutido
-:: Usa PowerShell inline para nao depender de xxd nem de Python.
 :: ---------------------------------------------------------------------------
 echo [3/4] Gerando %OUT_HEADER%...
 
-:: Garante que o diretorio de saida existe
 if not exist "%SCRIPT_DIR%\src\Renderizador" mkdir "%SCRIPT_DIR%\src\Renderizador"
 
-:: Script PowerShell que faz a conversao e escreve o header
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$vertSpv = [System.IO.File]::ReadAllBytes('%TMP_DIR%\quad.vert.spv');" ^
     "$fragSpv = [System.IO.File]::ReadAllBytes('%TMP_DIR%\quad.frag.spv');" ^
@@ -202,8 +240,11 @@ echo Arquivo gerado: %OUT_HEADER%
 echo Commite este arquivo junto com o codigo-fonte para que
 echo outros contribuidores nao precisem rodar este script.
 echo.
+pause
 goto :eof
 
 :cleanup_error
 rmdir /s /q "%TMP_DIR%" 2>nul
+echo.
+pause
 exit /b 1
