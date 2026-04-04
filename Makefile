@@ -176,9 +176,13 @@ ifeq ($(BACKEND),vk)
         BACKEND_LABEL = Vulkan/SDL3 [Windows]
     endif
 
-    # shaders_embedded.hpp — SPIR-V pré-compilado (gerado por compile_shaders.sh)
+    # shaders_embedded.hpp — SPIR-V pré-compilado (gerado por compile_shaders.sh/.bat)
     SHADERS_EMBEDDED = src/Renderizador/shaders_embedded.hpp
-    SHADERS_SCRIPT   = compile_shaders.sh
+    ifeq $(HOST_OS),windows)
+        SHADERS_SCRIPT = compile_shaders.bat
+    else
+        SHADERS_SCRIPT = compile_shaders.sh
+    endif
     CXXFLAGS        += -Isrc/Renderizador
 endif
 
@@ -277,13 +281,17 @@ setup:
 	@mkdir -p src src/Renderizador src/FAR
 
 # --- Compilação dos shaders padrão Vulkan → SPIR-V --------------------------
-# Executa compile_shaders.sh que gera src/Renderizador/shaders_embedded.hpp.
-# Requer: glslc  (Arch: sudo pacman -S shaderc | Ubuntu: sudo apt install glslang-tools)
+# Linux  : executa compile_shaders.sh  (requer glslc via shaderc)
+# Windows: executa compile_shaders.bat (requer glslc via Vulkan SDK LunarG)
 # O arquivo gerado deve ser commitado; outros usuários não precisam do glslc.
 $(SHADERS_EMBEDDED): $(SHADERS_SCRIPT)
 	@echo "→ Compilando shaders Vulkan..."
+ifeq ($(HOST_OS),windows)
+	@$(SHADERS_SCRIPT)
+else
 	@chmod +x $(SHADERS_SCRIPT)
 	@bash $(SHADERS_SCRIPT)
+endif
 	@printf "%b\n" "$(GREEN)✓ shaders_embedded.hpp gerado$(NC)"
 
 shaders: $(SHADERS_EMBEDDED)
