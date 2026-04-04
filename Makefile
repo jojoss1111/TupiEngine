@@ -9,7 +9,7 @@ BACKEND ?= gl
 # =============================================================================
 ifeq ($(BACKEND),gl)
     DEFINES  = -DENGINE_BACKEND_GL
-    SRC      = src/Engine_renderer.cpp src/render/RendererGL.cpp src/Engine_events.cpp src/fov.cpp
+    SRC      = src/Engine_renderer.cpp src/Renderizador/RendererGL.cpp src/Engine_events.cpp src/FAR/fov.cpp 
     LIBS     = -lX11 -lGL -lpng -lm -lpthread -ldl
     BACKEND_LABEL = OpenGL/X11
 endif
@@ -19,7 +19,7 @@ endif
 # =============================================================================
 ifeq ($(BACKEND),dx11)
     DEFINES  = -DENGINE_BACKEND_DX11
-    SRC      = src/Engine_renderer.cpp src/Engine_events.cpp src/render/RendererDX11.cpp src/fov.cpp
+    SRC      = src/Engine_renderer.cpp src/Engine_events.cpp src/Renderizador/RendererDX11.cpp src/FAR/fov.cpp
     LIBS     = -ld3d11 -ldxgi -ld3dcompiler -lpng -lm -lpthread
     BACKEND_LABEL = DirectX11/Win32
 endif
@@ -36,14 +36,11 @@ MINIAUDIO = src/miniaudio.h
 # Sistema de mapas (libmapa.so)
 #
 # Depende de libengine.so e da LuaJIT para carregar arquivos .lua.
-# cJSON.h/.c devem estar em src/ (baixe de github.com/DaveGamble/cJSON).
-#
 # Carregamento Lua: -llua (LuaJIT instalado no sistema)
-# Carregamento JSON: src/cJSON.c (single-header, sem dependência externa)
 # =============================================================================
 LIB_MAPA       = libmapa.so
-SRC_MAPA       = src/mapa.cpp
-HEADER_MAPA    = src/mapa.hpp
+SRC_MAPA       = src/FAR/mapa.cpp
+HEADER_MAPA    = src/FAR/mapa.hpp
 LIBS_MAPA      = -llua -lm -L. -lengine -Wl,-rpath,.
 
 # =============================================================================
